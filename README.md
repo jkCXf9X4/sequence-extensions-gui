@@ -11,21 +11,22 @@ imports your flow code; every evaluate or execute runs in a fresh subprocess.
 ## Install (development)
 
 ```bash
+# check out the GUI and the engine side by side
 git clone https://github.com/jkCXf9X4/sequence-extensions-gui
+git clone https://github.com/pyssporg/sequence_extensions
 cd sequence-extensions-gui
-# the engine checkout is expected next to this repository
 UV_NATIVE_TLS=1 uv sync --extra dev   # only needed behind a TLS-inspecting proxy
 uv run pytest
 uv run ruff check src tests
 ```
 
-The `sequence_extensions/` checkout is a separate repository and is gitignored
-here; `pyproject.toml` installs it editable through `[tool.uv.sources]`.
+The engine is a sibling checkout (`../sequence_extensions`), not a nested
+repository; `pyproject.toml` installs it editable through `[tool.uv.sources]`.
 
 ## Run
 
 ```bash
-uv run seq-ext-gui --project-root sequence_extensions/examples/flow_runner
+uv run seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 # open http://127.0.0.1:8765
 ```
 

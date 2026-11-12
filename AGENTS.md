@@ -17,9 +17,9 @@ re-implement the engine.
   - `cli.py` — `seq-ext-gui` entry point.
   - `static/` — browser UI (vanilla JS, no CDN, offline).
 - `tests/` — pytest suite; `uv run pytest`.
-- `sequence_extensions/` — upstream engine checkout, a separate git repository.
-  It is a development dependency and is gitignored here. Never edit it for GUI
-  features.
+- `../sequence_extensions/` — upstream engine checkout, a sibling git
+  repository. The GUI repo and the engine checkout are kept side by side; no
+  repository is nested inside another. Never edit the engine for GUI features.
 
 ## Commands
 
@@ -27,7 +27,7 @@ re-implement the engine.
 uv sync --extra dev          # create/refresh .venv with the editable upstream checkout
 uv run pytest                # tests
 uv run ruff check src tests  # lint
-uv run seq-ext-gui --project-root sequence_extensions/examples/flow_runner
+uv run seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 ```
 
 ## Rules
@@ -50,14 +50,14 @@ uv run seq-ext-gui --project-root sequence_extensions/examples/flow_runner
 
 - `uv run pytest` must pass.
 - `uv run ruff check src tests` must pass.
-- Manual: `uv run seq-ext-gui` with `--project-root sequence_extensions/examples/flow_runner`,
+- Manual: `uv run seq-ext-gui` with `--project-root ../sequence_extensions/examples/flow_runner`,
   select `flows.py` + `campaign.toml`, press Evaluate, inspect the graph, press Execute.
 
 ## Environment notes
 
 - System `python3` is 3.10 and cannot run the engine. Use the uv-managed 3.11 venv.
 - The upstream `flow-runner` installed globally is stale; the editable checkout
-  in `sequence_extensions/` is the development target.
+  in `../sequence_extensions/` is the development target.
 - GitHub access uses HTTPS; SSH is blocked.
 - If `uv` fails with `invalid peer certificate: UnknownIssuer`, the network
   inspects TLS: prefix uv commands with `UV_NATIVE_TLS=1`.

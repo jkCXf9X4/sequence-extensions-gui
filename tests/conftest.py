@@ -82,7 +82,7 @@ def repo_root() -> Path:
 
 @pytest.fixture
 def examples_dir(repo_root: Path) -> Path:
-    return repo_root / "sequence_extensions" / "examples" / "flow_runner"
+    return repo_root.parent / "sequence_extensions" / "examples" / "flow_runner"
 
 
 @pytest.fixture

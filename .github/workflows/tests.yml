@@ -11,12 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The engine is a development dependency, checked out next to this repo.
+      # The engine is a development dependency, checked out next to this repo
+      # so that the `../sequence_extensions` path source resolves.
       # Pin the revision that uv.lock and the test suite were verified against.
       - name: Checkout sequence_extensions
         run: |
-          git clone --filter=blob:none https://github.com/pyssporg/sequence_extensions.git sequence_extensions
-          git -C sequence_extensions checkout 3bf6f6d9aff007fd76265a7511017aa6dad64c2d
+          git clone --filter=blob:none https://github.com/pyssporg/sequence_extensions.git ../sequence_extensions
+          git -C ../sequence_extensions checkout 3bf6f6d9aff007fd76265a7511017aa6dad64c2d
 
       - uses: astral-sh/setup-uv@v5
         with:

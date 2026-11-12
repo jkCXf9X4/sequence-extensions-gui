@@ -529,7 +529,7 @@ wheels = [
 
 [[package]]
 name = "sequence-extensions-flow"
-source = { editable = "sequence_extensions" }
+source = { editable = "../sequence_extensions" }
 
 [package.metadata]
 requires-dist = [
@@ -561,7 +561,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "sequence-extensions-flow", editable = "sequence_extensions" },
+    { name = "sequence-extensions-flow", editable = "../sequence_extensions" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 provides-extras = ["dev"]
