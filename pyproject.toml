@@ -13,7 +13,7 @@ authors = [{ name = "Erik Rosenlund" }]
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
-  "sequence-extensions-flow>=3.0.1",
+  "sequence-extensions-flow @ git+https://github.com/pyssporg/sequence_extensions.git@ac7e0e590ed3348b5cff5a8544ba1e064610db03",
 ]
 
 [project.optional-dependencies]
