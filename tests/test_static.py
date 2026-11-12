@@ -204,10 +204,29 @@ def test_parameter_edits_use_the_plan_not_overrides() -> None:
     assert "param.value = value" in source
 
 
-def test_root_node_shows_the_flow_name() -> None:
-    source = read("app.js")
-    assert "ui.rootNode.textContent = state.flowName" in source
-    assert "plan.root" not in source
+def test_synthetic_root_is_gui_only() -> None:
+    html = read("index.html")
+    app = read("app.js")
+    graph = read("graph.js")
+
+    # The root is synthesized in the view layer; the plan schema has no root.
+    assert "export const ROOT_NODE_ID" in graph
+    assert "export function withRootNode" in graph
+    assert 'kind: "root"' in graph
+    assert "rootEdges" in graph
+    assert "to: ROOT_NODE_ID" in graph
+    assert "plan.root" not in app
+    assert "plan.root" not in graph
+
+    # Apply selects the root and passes the flow label to the renderer.
+    assert "ROOT_NODE_ID" in app
+    assert "state.selectedId = ROOT_NODE_ID" in app
+    assert "rootLabel: state.flowName" in app
+
+    # The standalone flow-inputs panel is replaced by the root node editor.
+    for dead in ("root-editor", "root-node"):
+        assert dead not in html
+        assert dead not in app
 
 
 @pytest.mark.parametrize("name", STATIC_FILES)
@@ -228,7 +247,7 @@ def test_graph_layout_edge_cases(tmp_path: Path) -> None:
     script = tmp_path / "layout.mjs"
     script.write_text(
         f"""
-import {{ computeLayout }} from {module.as_uri()!r};
+import {{ computeLayout, withRootNode }} from {module.as_uri()!r};
 
 function check(value, message) {{
   if (!value) throw new Error(message);
@@ -236,6 +255,29 @@ function check(value, message) {{
 
 const empty = computeLayout(null);
 check(empty.nodes.length === 0 && empty.positions.size === 0, "empty plan");
+
+const raw = {{
+  parameters: [{{ name: "alpha", type: "int", value: 3 }}],
+  nodes: [
+    {{ id: 1, name: "entry" }},
+    {{ id: 2, name: "dependent" }},
+  ],
+  edges: [{{ from: 2, to: 1 }}],
+}};
+const view = withRootNode(raw, "demo");
+check(view !== raw && raw.nodes.length === 2, "withRootNode is non-destructive");
+check(view.nodes.length === 3, "root appended");
+const root = view.nodes.find((node) => node.id === "root");
+check(root && root.kind === "root" && root.name === "demo", "root node shape");
+check(root.params === raw.parameters, "root reuses plan parameters");
+check(view.edges.some((edge) => edge.from === 1 && edge.to === "root"), "entry to root");
+check(!view.edges.some((edge) => edge.from === 2 && edge.to === "root"), "only entry nodes");
+const rooted = computeLayout(view);
+check(rooted.positions.get("root").y < rooted.positions.get("1").y, "root above entry");
+check(rooted.positions.get("1").y < rooted.positions.get("2").y, "entry above dependent");
+
+const bare = withRootNode({{ parameters: [], nodes: [], edges: [] }}, "");
+check(bare.nodes.length === 1 && bare.nodes[0].name === "Flow parameters", "bare root");
 
 const one = computeLayout({{ nodes: [{{ id: 7, name: "solo" }}], edges: [] }});
 const single = one.positions.get("7");

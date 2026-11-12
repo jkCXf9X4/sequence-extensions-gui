@@ -7,6 +7,7 @@
 // below. Arrows are drawn dependency -> dependent, i.e. downward data flow.
 
 const NS = "http://www.w3.org/2000/svg";
+export const ROOT_NODE_ID = "root";
 const NODE_W = 212;
 const NODE_H = 96;
 const COL_GAP = 36;
@@ -49,6 +50,36 @@ function edgeEnds(edge) {
 function clip(value, limit) {
   const text = String(value ?? "");
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+// View-only plan: append the synthetic root (the selected flow's parameters)
+// and branch it from every entry node (a node that is never a dependent).
+export function withRootNode(plan, label) {
+  const nodes = Array.isArray(plan?.nodes) ? plan.nodes : [];
+  const edges = Array.isArray(plan?.edges) ? plan.edges : [];
+
+  const dependents = new Set();
+  for (const edge of edges) {
+    const { from } = edgeEnds(edge);
+    if (from !== undefined) dependents.add(String(from));
+  }
+  const rootEdges = [];
+  for (const node of nodes) {
+    if (!dependents.has(String(node.id))) rootEdges.push({ from: node.id, to: ROOT_NODE_ID });
+  }
+
+  const rootNode = {
+    id: ROOT_NODE_ID,
+    name: label || "Flow parameters",
+    kind: "root",
+    instance: 1,
+    params: plan?.parameters || [],
+  };
+  return {
+    ...plan,
+    nodes: [...nodes, rootNode],
+    edges: [...edges, ...rootEdges],
+  };
 }
 
 export function computeLayout(plan) {
@@ -125,7 +156,8 @@ export function renderGraph(svg, plan, options = {}) {
   clear(svg);
   svg.classList.remove("panning");
 
-  const { nodes, links, positions, width, height } = computeLayout(plan);
+  const view = plan ? withRootNode(plan, options.rootLabel) : null;
+  const { nodes, links, positions, width, height } = computeLayout(view);
   const state = { transform: null, width, height, dispose: null, fit: null };
   stateBySvg.set(svg, state);
 
@@ -192,6 +224,7 @@ export function renderGraph(svg, plan, options = {}) {
     const name = String(node.name ?? nodeId);
     const kind = String(node.kind ?? "node");
     const instance = node.instance ?? 1;
+    const isRoot = kind === "root";
     const params = (node.params || []).map((param) => {
       return `${param.name}=${short(param.value ?? param.default, 14)}`;
     });
@@ -199,7 +232,7 @@ export function renderGraph(svg, plan, options = {}) {
     const fullParams = params.length ? params.join(", ") : "no parameters";
 
     const group = el("g", {
-      class: `graph-node${nodeId === selected ? " selected" : ""}`,
+      class: `graph-node${isRoot ? " root" : ""}${nodeId === selected ? " selected" : ""}`,
       transform: `translate(${pos.x} ${pos.y})`,
       "data-node-id": nodeId,
       tabindex: "0",
@@ -213,23 +246,27 @@ export function renderGraph(svg, plan, options = {}) {
     group.append(nameText);
 
     const meta = el("text", { class: "node-meta", x: 12, y: 42 });
-    meta.textContent = `#${instance} · ${kind}`;
+    meta.textContent = isRoot ? `root · ${params.length} inputs` : `#${instance} · ${kind}`;
     group.append(meta);
 
     const paramLine = el("text", { class: "node-params", x: 12, y: 62 });
     paramLine.textContent = paramText;
     group.append(paramLine);
 
-    const policy = node.policy || {};
-    const policyLine = el("text", { class: "node-params", x: 12, y: 78 });
-    policyLine.textContent = clip(
-      `retries=${policy.retries ?? 0} timeout=${policy.timeout ?? "—"}`,
-      34,
-    );
-    group.append(policyLine);
+    if (!isRoot) {
+      const policy = node.policy || {};
+      const policyLine = el("text", { class: "node-params", x: 12, y: 78 });
+      policyLine.textContent = clip(
+        `retries=${policy.retries ?? 0} timeout=${policy.timeout ?? "—"}`,
+        34,
+      );
+      group.append(policyLine);
+    }
 
     const title = el("title");
-    title.textContent = `${name} (#${instance}, ${kind})\n${fullParams}`;
+    title.textContent = isRoot
+      ? `${name} (root)\n${fullParams}`
+      : `${name} (#${instance}, ${kind})\n${fullParams}`;
     group.append(title);
 
     group.addEventListener("keydown", (event) => {

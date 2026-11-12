@@ -406,6 +406,23 @@ input:disabled, select:disabled, textarea:disabled {
   stroke-dasharray: 4 2;
 }
 
+.graph-node.root .node-box {
+  fill: #12222e;
+  stroke: var(--accent-dim);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+}
+
+.graph-node.root .node-name { fill: var(--accent); }
+
+.graph-node.root.selected .node-box,
+.graph-node.root:focus-visible .node-box {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: none;
+  fill: #17303f;
+}
+
 .node-name {
   fill: var(--text);
   font-family: var(--mono);

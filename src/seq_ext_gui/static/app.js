@@ -1,7 +1,7 @@
 // Browser UI for the sequence_extensions flow engine. Vanilla ES module.
 // All engine-provided text is inserted with textContent; there is no innerHTML.
 
-import { fitGraph, renderGraph, selectGraphNode } from "./graph.js";
+import { fitGraph, ROOT_NODE_ID, renderGraph, selectGraphNode } from "./graph.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -28,8 +28,6 @@ const ui = {
   execute: $("execute"),
   cancel: $("cancel"),
   dirtyHint: $("dirty-hint"),
-  rootNode: $("root-node"),
-  rootEditor: $("root-editor"),
   selectedNode: $("selected-node"),
   nodeEditor: $("node-editor"),
   jobStatus: $("job-status"),
@@ -296,7 +294,6 @@ async function selectFile(path) {
       populateFlowSelect([]);
       if (state.plan) {
         // Keep an imported/edited plan so it can be evaluated against this flow.
-        ui.rootNode.textContent = "";
         markDirty();
       } else {
         clearPlan();
@@ -324,9 +321,7 @@ function clearPlan() {
   ui.dirtyHint.classList.add("hidden");
   ui.graphEmpty.classList.remove("hidden");
   ui.graphEmpty.textContent = "Evaluate a flow to see its graph";
-  ui.rootNode.textContent = "";
   ui.selectedNode.textContent = "none";
-  ui.rootEditor.replaceChildren(message("No plan loaded.", "muted"));
   ui.nodeEditor.replaceChildren(message("Select a node in the graph.", "muted"));
   ui.planStatus.textContent = "none";
   renderGraph(ui.graph, null);
@@ -413,22 +408,21 @@ function buildPayload() {
 
 function applyPlan(plan) {
   state.plan = plan;
-  state.selectedId = null;
+  state.selectedId = ROOT_NODE_ID;
   state.dirty = false;
   ui.dirtyHint.classList.add("hidden");
   ui.execute.disabled = false;
   ui.exportPlan.disabled = false;
   ui.planStatus.textContent = PLAN_SCHEMA;
   ui.graphEmpty.classList.add("hidden");
-  ui.rootNode.textContent = state.flowName || "";
   syncOptions();
   setOptionsEnabled(true);
   renderGraph(ui.graph, plan, {
     onSelect: selectNode,
-    selectedId: null,
+    selectedId: ROOT_NODE_ID,
+    rootLabel: state.flowName || "",
     emptyText: "Root flow — no child nodes.",
   });
-  renderRootEditor();
   renderNodeEditor();
 }
 
@@ -662,28 +656,28 @@ function buildParam(param, commit) {
   return row;
 }
 
-function renderRootEditor() {
-  ui.rootEditor.replaceChildren();
-  const params = state.plan?.parameters || [];
-  if (!params.length) {
-    ui.rootEditor.append(message("No flow inputs.", "muted"));
-    return;
-  }
-  for (const param of params) {
-    ui.rootEditor.append(
-      buildParam(param, (value) => {
-        param.value = value;
-        markDirty();
-      }),
-    );
-  }
-}
-
 function renderNodeEditor() {
   ui.nodeEditor.replaceChildren();
   if (!state.plan) {
     ui.selectedNode.textContent = "none";
     ui.nodeEditor.append(message("Select a node in the graph.", "muted"));
+    return;
+  }
+  if (state.selectedId === ROOT_NODE_ID) {
+    ui.selectedNode.textContent = state.flowName || "Flow parameters";
+    const params = state.plan.parameters || [];
+    if (!params.length) {
+      ui.nodeEditor.append(message("No flow inputs.", "muted"));
+      return;
+    }
+    for (const param of params) {
+      ui.nodeEditor.append(
+        buildParam(param, (value) => {
+          param.value = value;
+          markDirty();
+        }),
+      );
+    }
     return;
   }
   const node = (state.plan.nodes || []).find(
@@ -1140,7 +1134,6 @@ ui.planFile.addEventListener("change", () => {
 
 ui.flowSelect.addEventListener("change", () => {
   state.flowName = ui.flowSelect.value || null;
-  ui.rootNode.textContent = state.flowName || "";
   markDirty();
 });
 
