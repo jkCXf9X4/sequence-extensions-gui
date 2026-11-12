@@ -54,6 +54,13 @@ environment fallback.
 
 See `docs/architecture.md` for the wire contract and the subprocess protocol.
 
+## Breakdown
+
+`docs/breakdown/` holds the project's current state: intent, use cases,
+architecture, verification, operation, review, and the open improvements. Start
+at `docs/breakdown/README.md`. It is the source of truth; this README is the
+front door.
+
 ## Layout
 
 ```

@@ -1,5 +1,8 @@
 # Architecture and wire contract
 
+Current-state facts live in `docs/breakdown/`; this document is derived
+implementation narrative.
+
 The GUI is a thin, offline, local presentation layer around the `sequence_extensions`
 flow engine. It never imports user flow code into the web process.
 

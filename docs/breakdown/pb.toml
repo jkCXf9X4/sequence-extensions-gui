@@ -1,0 +1,15 @@
+# pb.toml — overrides only; everything else follows the built-in defaults.
+
+[layout]
+# Cold-storage decision archive (ZIP): records at the zip root, tombstones
+# under its deprecated/ namespace, reached only via `pb archive`.
+archive = "../archive/archive.zip"
+# The breakdown root is docs/breakdown/, two levels below the repo root, so
+# record `artifacts:` paths (src/..., tests/...) resolve from the repo root.
+repo_root = "../.."
+
+[registers]
+# Archive mode resolves these relative to docs/archive/.
+index = "README.md"
+log = "design-choice-log.md"
+traceability = "traceability-map.md"

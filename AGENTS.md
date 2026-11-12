@@ -17,6 +17,9 @@ re-implement the engine.
   - `cli.py` — `seq-ext-gui` entry point.
   - `static/` — browser UI (vanilla JS, no CDN, offline).
 - `tests/` — pytest suite; `pytest`.
+- `docs/breakdown/` — current state, use cases, and open work. Read
+  `docs/breakdown/README.md` first; the breakdown is the source of truth.
+- `docs/architecture.md` — derived implementation narrative.
 - `requirements-dev.txt` — editable engine checkout, then this package with `[dev]`.
 - `setup.sh` — idempotent venv creation and install.
 - `../sequence_extensions/` — the engine checkout used during development,
@@ -54,6 +57,8 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 
 - `pytest` must pass.
 - `ruff check src tests` must pass.
+- Product-breakdown checks must pass after editing the tree:
+  `pb check --strict` and `pb node-size --strict`.
 - Manual: `seq-ext-gui` with `--project-root ../sequence_extensions/examples/flow_runner`,
   select `flows.py` + `campaign.toml`, press Evaluate, inspect the graph, press Execute.
 
