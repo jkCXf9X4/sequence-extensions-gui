@@ -59,3 +59,5 @@ uv run seq-ext-gui --project-root sequence_extensions/examples/flow_runner
 - The upstream `flow-runner` installed globally is stale; the editable checkout
   in `sequence_extensions/` is the development target.
 - GitHub access uses HTTPS; SSH is blocked.
+- If `uv` fails with `invalid peer certificate: UnknownIssuer`, the network
+  inspects TLS: prefix uv commands with `UV_NATIVE_TLS=1`.

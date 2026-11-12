@@ -9,4 +9,3 @@ sequence_extensions/
 .seq_ext_gui/
 _out/
 *.egg-info/
-uv.lock

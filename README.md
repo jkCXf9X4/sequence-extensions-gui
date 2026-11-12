@@ -14,7 +14,7 @@ imports your flow code; every evaluate or execute runs in a fresh subprocess.
 git clone https://github.com/jkCXf9X4/sequence-extensions-gui
 cd sequence-extensions-gui
 # the engine checkout is expected next to this repository
-uv sync --extra dev
+UV_NATIVE_TLS=1 uv sync --extra dev   # only needed behind a TLS-inspecting proxy
 uv run pytest
 uv run ruff check src tests
 ```
