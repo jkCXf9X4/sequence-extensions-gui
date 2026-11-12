@@ -152,8 +152,8 @@ const plan = {{
 }};
 const laid = computeLayout(plan);
 check(laid.positions.size === 3, "non-contiguous ids");
-check(laid.positions.get("10").y < laid.positions.get("3").y, "dependent above dependency");
-check(laid.positions.get("42").y < laid.positions.get("10").y, "transitive rank");
+check(laid.positions.get("3").y < laid.positions.get("10").y, "dependency above dependent");
+check(laid.positions.get("10").y < laid.positions.get("42").y, "transitive rank");
 
 const alias = computeLayout({{
   nodes: [{{ id: 1, name: "a" }}, {{ id: 2, name: "b" }}],

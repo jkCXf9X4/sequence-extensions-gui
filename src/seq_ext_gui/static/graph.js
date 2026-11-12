@@ -1,11 +1,10 @@
 // Self-contained SVG layered DAG renderer. No dependencies, no innerHTML.
 //
 // Orientation: an edge is `from` -> `to`, where `from` depends on `to`
-// (dependent -> dependency). A node's layer is the longest path from that node
-// to a sink while following those edges, so a node with no dependencies is at
-// layer 0 and dependents get larger layers. Layers are drawn top-to-bottom in
-// reverse: dependents above, dependencies below. Arrowheads therefore point
-// downward "depends on".
+// (dependent -> dependency). A node's layer is the longest dependency chain
+// below it, so a node with no dependencies is at layer 0. Layers are drawn
+// top-to-bottom: dependencies (sources of data) above, dependents (the root)
+// below. Arrows are drawn dependency -> dependent, i.e. downward data flow.
 
 const NS = "http://www.w3.org/2000/svg";
 const NODE_W = 212;
@@ -111,7 +110,7 @@ export function computeLayout(plan) {
   for (const [layer, row] of rows) {
     const rowWidth = row.length * NODE_W + (row.length - 1) * COL_GAP;
     const startX = (width - rowWidth) / 2;
-    const y = (maxRank - layer) * (NODE_H + ROW_GAP);
+    const y = layer * (NODE_H + ROW_GAP);
     row.forEach((node, index) => {
       positions.set(String(node.id), { x: startX + index * (NODE_W + COL_GAP), y });
     });
@@ -164,9 +163,10 @@ export function renderGraph(svg, plan, options = {}) {
     );
   }
 
-  for (const { source: from, target: to } of links) {
-    const source = positions.get(from);
-    const target = positions.get(to);
+  for (const { source: dependent, target: dependency } of links) {
+    // Draw dependency -> dependent so the arrow follows the data flow downward.
+    const source = positions.get(dependency);
+    const target = positions.get(dependent);
     if (!source || !target) continue;
     const x1 = source.x + NODE_W / 2;
     const y1 = source.y + NODE_H;
