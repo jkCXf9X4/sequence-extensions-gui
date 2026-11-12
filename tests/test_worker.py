@@ -81,22 +81,6 @@ def test_worker_cli_dispatches_discovery(tmp_path: Path, sample_project) -> None
     assert cards["scale"].signature == "(value: int, factor: int = 1) -> int"
 
 
-def test_worker_dispatch_passes_root_values_through(sample_project) -> None:
-    request = WorkerRequest(
-        mode="plan",
-        flow_file=str(sample_project.required),
-        flow_name="needs_input",
-        root_values={"cases_dir": "cases"},
-    )
-
-    result = _dispatch(request)
-
-    assert result.ok, result.error
-    assert result.plan is not None
-    parameter = next(param for param in result.plan.parameters if param.name == "cases_dir")
-    assert parameter.value["path"] == "cases"
-
-
 def test_worker_dispatch_rejects_an_unknown_mode(sample_project) -> None:
     request = WorkerRequest.model_construct(
         mode="bogus",

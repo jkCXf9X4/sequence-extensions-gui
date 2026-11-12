@@ -216,9 +216,6 @@ def test_root_preview_and_required_inputs() -> None:
     assert "Missing required flow parameter(s): " in source
     assert "Fill required inputs, then Evaluate." in source
 
-    body = function_body(source, "buildPayload")
-    assert "root_values" not in body, "buildPayload still sends root_values"
-
 
 def test_run_options_mutate_the_plan() -> None:
     source = read("app.js")

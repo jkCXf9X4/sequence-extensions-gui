@@ -115,7 +115,6 @@ class JobRequest(BaseModel):
     flow_file: str
     flow_name: str | None = None
     plan: dict[str, Any] | None = None
-    root_values: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
 

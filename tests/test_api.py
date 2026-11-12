@@ -70,10 +70,6 @@ result = {
     "plan": request.get("plan"),
     "duration_ms": 1,
 }
-if request.get("root_values") is not None:
-    result["warnings"] = [
-        "root_values:" + json.dumps(request["root_values"], sort_keys=True)
-    ]
 result_path.write_text(json.dumps(result), encoding="utf-8")
 '''
 
@@ -211,18 +207,6 @@ def test_evaluate_returns_the_worker_result(client: TestClient) -> None:
     # PlanOptions fills concrete defaults for a document that omitted them.
     assert body["plan"]["options"]["max_workers"] == 16
     assert body["plan"]["options"]["timeout"] is None
-
-
-def test_evaluate_accepts_root_values(client: TestClient) -> None:
-    response = client.post(
-        "/api/evaluate",
-        json={"flow_file": "flow.py", "flow_name": "root", "root_values": {"n": 4}},
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["ok"] is True
-    assert body["warnings"] == ['root_values:{"n": 4}']
 
 
 def test_discover_returns_node_cards(client: TestClient) -> None:

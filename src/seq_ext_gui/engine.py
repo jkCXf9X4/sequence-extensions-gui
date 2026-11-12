@@ -68,7 +68,7 @@ def plan(request: WorkerRequest) -> WorkerResult:
             seed = request.plan
             if seed is not None:
                 _require_document(seed)
-            root_kwargs = _root_values(fn, seed, request.root_values)
+            root_kwargs = _root_values(fn, seed)
             fresh = plan_document(fn, options=_run_options(seed), **root_kwargs)
             document = fresh
             if seed is not None:
@@ -243,15 +243,8 @@ def _run_options(document: dict[str, Any] | None) -> RunOptions:
     return RunOptions(**options.model_dump())
 
 
-def _root_values(
-    fn: NodeFunction,
-    document: dict[str, Any] | None,
-    root_values: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Decode root parameters into keyword arguments.
-
-    Seed document values are read first; explicit ``root_values`` win by name.
-    """
+def _root_values(fn: NodeFunction, document: dict[str, Any] | None) -> dict[str, Any]:
+    """Decode root parameters from the seed document into keyword arguments."""
     signature = inspect.signature(fn.fn)
     params = [
         parameter
@@ -270,14 +263,8 @@ def _root_values(
         value = entry.get("value")
         if value is not None:
             values[name] = decode_value(value, types[name])
-    for name, value in (root_values or {}).items():
-        if name not in types:
-            unknown.append(name)
-            continue
-        if value is not None:
-            values[name] = decode_value(value, types[name])
     if unknown:
-        listed = ", ".join(sorted({repr(name) for name in unknown}))
+        listed = ", ".join(sorted(repr(name) for name in unknown))
         raise EngineError(f"unknown root parameter(s): {listed}")
 
     missing = [
