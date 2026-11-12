@@ -104,6 +104,8 @@ def test_plan_document_emits_only_the_engine_fields() -> None:
     assert "flow-plan/2" in source
     assert not re.search(r"\beditable\b", body), "planDocument leaks editable"
     assert not re.search(r"\bnote\b", body), "planDocument leaks note"
+    assert re.search(r"\bpath:\s*Array\.isArray\(node\.path\)", body), "path identity lost"
+    assert re.search(r"\binstance:\s*node\.instance\s*\?\?\s*1", body), "instance identity lost"
     assert re.search(r"\bfrom:\s*edge\.from\s*\?\?\s*edge\.source", body)
     assert re.search(r"\bto:\s*edge\.to\s*\?\?\s*edge\.target", body)
 
@@ -241,6 +243,55 @@ def test_parameter_edits_use_the_plan_not_overrides() -> None:
     for removed in ("reconcileOverrides", "deleteOverride", "state.overrides", "emptyOverrides"):
         assert removed not in source, f"stale override helper remains: {removed}"
     assert "param.value = value" in source
+
+
+def test_node_edits_target_one_occurrence() -> None:
+    source = read("app.js")
+    assert "edits apply to all of them" not in source
+    assert "candidate.name !== node.name" not in source
+    assert "setNodeParamValue(node, param.name, value)" in source
+    assert "setNodePolicyValue(node, key, parsed.value)" in source
+
+
+def test_edit_one_instance_leaves_sibling_unchanged(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    source = read("app.js")
+    script = tmp_path / "instance_edit.mjs"
+    script.write_text(
+        "function setNodeParamValue(node, name, value) {\n"
+        + function_body(source, "setNodeParamValue")
+        + "\n}\nfunction setNodePolicyValue(node, key, value) {\n"
+        + function_body(source, "setNodePolicyValue")
+        + "\n}\n"
+        + """
+const first = {
+  id: 1,
+  name: "scale",
+  instance: 1,
+  params: [{ name: "factor", value: 1 }],
+  policy: { retries: 0 },
+};
+const second = {
+  id: 2,
+  name: "scale",
+  instance: 2,
+  params: [{ name: "factor", value: 1 }],
+  policy: { retries: 0 },
+};
+const plan = { nodes: [first, second] };
+setNodeParamValue(plan.nodes[0], "factor", 10);
+setNodePolicyValue(plan.nodes[0], "retries", 2);
+if (first.params[0].value !== 10) throw new Error("selected param not updated");
+if (first.policy.retries !== 2) throw new Error("selected policy not updated");
+if (second.params[0].value !== 1) throw new Error("sibling param changed");
+if (second.policy.retries !== 0) throw new Error("sibling policy changed");
+""",
+        encoding="utf-8",
+    )
+    proc = subprocess.run([node, str(script)], capture_output=True, text=True)
+    assert proc.returncode == 0, f"single-instance edit test failed:\n{proc.stderr}"
 
 
 def test_synthetic_root_is_gui_only() -> None:

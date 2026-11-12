@@ -84,8 +84,9 @@ def typed(n: int = 1, ratio: float = 1.5, flag: bool = False, label: str = "x") 
     return f"{n}:{ratio}:{flag}:{label}"
 '''
 
-#: A hand-written ``flow-plan/2`` seed: only the values a user edited.  The GUI
-#: imports a document like this, and ``engine.plan`` folds it onto fresh code.
+#: A hand-written ``flow-plan/2`` seed: the node values a user edited, keyed
+#: by identity.  The GUI imports a document like this, and ``engine.plan``
+#: folds it onto fresh code.
 SAMPLE_PLAN: dict[str, Any] = {
     "schema": "flow-plan/2",
     "parameters": [
@@ -94,11 +95,14 @@ SAMPLE_PLAN: dict[str, Any] = {
     "nodes": [
         {
             "name": "scale",
+            "path": ["root", "scale"],
+            "instance": instance,
             "params": [
                 {"name": "factor", "type": "int", "required": False, "default": 1, "value": 10}
             ],
             "policy": {"retries": 2},
         }
+        for instance in (1, 2, 3)
     ],
     "edges": [],
     "options": {"max_workers": 2},

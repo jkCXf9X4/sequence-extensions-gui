@@ -13,6 +13,6 @@ The operator changes root inputs and node parameters the flow leaves unset, then
 
 - **Request:** "let me try other values without touching the flow code."
 - **Goal:** tune a run from the preview.
-- **Observable outcome:** the edited value shows in the parameter editor, and the plan is marked stale until the next Evaluate reflects it.
+- **Observable outcome:** the edited value shows in the parameter editor, only the selected occurrence changes, and the plan is marked stale until the next Evaluate reflects it.
 - **Where it fits:** on an evaluated plan (`CP-003`), before Execute (`CP-005`).
 - **Where it strains:** a read-only value stays disabled and gives its reason, so an edit the flow binds never applies (`REQ-001`).

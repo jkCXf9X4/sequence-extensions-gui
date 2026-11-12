@@ -14,4 +14,4 @@ Every value that flow code fixes stays read-only, and every limit of an edit is 
 - **Promise:** a preview never pretends an edit took effect; code-bound values stay disabled with a reason.
 - **Why it matters:** the operator judges a run from the preview, so a hidden override makes the verdict untrustworthy.
 - **Violated by:** an edit accepted in the UI that the engine discards, or an unsupported edit applied with no notice.
-- **Notice:** read-only values show a short reason, unsupported policy edits raise a warning, and an edit shared by repeated node instances warns that it hits every instance.
+- **Notice:** read-only values show a short reason, unsupported policy edits raise a warning, and a stale or missing node identity skips that node's edits with a warning instead of applying name-wide.

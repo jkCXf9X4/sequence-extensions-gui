@@ -48,8 +48,10 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
    such parameters read-only in the UI; do not pretend an edit took effect.
 4. **Per-node policy goes through the plan.** It is supported upstream:
    edits live in `state.plan.nodes[].policy` and reach the engine as
-   `RunOptions.node_policies`. Edits are keyed by node name, so all instances
-   share them. Never mutate `NodeFunction` attributes.
+   `RunOptions.node_policies`. Edits are keyed by node identity
+   (name, path, instance), so each edit targets one occurrence; name-wide
+   overrides remain an engine capability, not the GUI default. Never mutate
+   `NodeFunction` attributes.
 5. **Offline UI.** No CDN links, no network assets, no build step.
 6. **Boring code.** Standard library first, minimal dependencies, no speculative
    abstractions.

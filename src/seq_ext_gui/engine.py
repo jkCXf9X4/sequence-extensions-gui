@@ -71,11 +71,14 @@ def plan(request: WorkerRequest) -> WorkerResult:
             root_kwargs = _root_values(fn, seed)
             fresh = plan_document(fn, options=_run_options(seed), **root_kwargs)
             document = fresh
+            warnings: list[str] = []
             if seed is not None:
-                override = _override_from_seed(seed, fresh, root_kwargs)
+                override, seed_warnings = _override_from_seed(seed, fresh, root_kwargs)
+                warnings.extend(seed_warnings)
                 if override:
                     document = apply_override(fresh, override)
-            wire_plan, warnings = _wire_plan(fresh, values=document)
+            wire_plan, wire_warnings = _wire_plan(fresh, values=document)
+            warnings.extend(wire_warnings)
         return WorkerResult(
             ok=True,
             mode="plan",
@@ -277,44 +280,91 @@ def _root_values(fn: NodeFunction, document: dict[str, Any] | None) -> dict[str,
     return values
 
 
+_POLICY_FIELDS = ("retries", "retry_delay_seconds", "timeout")
+
+
 def _override_from_seed(
     seed: dict[str, Any], fresh: dict[str, Any], root_kwargs: dict[str, Any]
-) -> dict[str, Any]:
-    """Re-apply the seed plan's edits on top of the freshly planned document."""
+) -> tuple[dict[str, Any], list[str]]:
+    """Re-apply the seed plan's edits on top of the freshly planned document.
+
+    Node edits target one occurrence by exact identity ``(name, path,
+    instance)``.  A seed node without that identity (a legacy plan) or with an
+    identity the fresh plan no longer contains is skipped with a warning;
+    there is no name-wide fallback.  Only values that differ from the fresh
+    plan are emitted, so unchanged defaults are not pinned.  Root parameters
+    keep their existing name-keyed behavior.
+    """
     override: dict[str, Any] = {}
+    warnings: list[str] = []
     if root_kwargs:
         override["parameters"] = [
             {"name": name, "value": value} for name, value in root_kwargs.items()
         ]
 
-    param_types: dict[str, dict[str, str]] = {}
-    for entry in fresh["nodes"]:
-        types = param_types.setdefault(entry["name"], {})
-        for param in entry.get("params", ()):
-            types[param["name"]] = param.get("type", "")
+    fresh_by_identity = {
+        (entry["name"], tuple(entry.get("path", ())), entry.get("instance", 1)): entry
+        for entry in fresh.get("nodes", ())
+    }
 
     node_overrides: list[dict[str, Any]] = []
     for entry in seed.get("nodes", ()):
         name = entry.get("name")
-        types = param_types.get(name, {})
-        spec: dict[str, Any] = {"name": name}
-        params = [
-            {
-                "name": param["name"],
-                "value": decode_value(param.get("value"), types.get(param["name"], "")),
-            }
-            for param in entry.get("params", ())
-        ]
+        if name is None:
+            continue
+        if "path" not in entry or "instance" not in entry:
+            warnings.append(
+                f"node {name} has no identity in the imported plan; "
+                "its edits were skipped; re-Evaluate to edit it"
+            )
+            continue
+
+        path = list(entry.get("path") or ())
+        instance = entry["instance"]
+        target = fresh_by_identity.get((name, tuple(path), instance))
+        if target is None:
+            warnings.append(
+                f"node {name} #{instance} no longer exists in the re-planned flow; "
+                "re-Evaluate to edit it"
+            )
+            continue
+
+        fresh_params = {param["name"]: param for param in target.get("params", ())}
+        params = []
+        for param in entry.get("params", ()):
+            param_name = param.get("name")
+            fresh_param = fresh_params.get(param_name)
+            if fresh_param is None:
+                warnings.append(
+                    f"parameter {param_name} on node {name} #{instance} no longer "
+                    "exists in the re-planned flow; skipped"
+                )
+                continue
+            value = decode_value(param.get("value"), fresh_param.get("type", ""))
+            if value != fresh_param.get("value"):
+                params.append({"name": param_name, "value": value})
+
+        spec: dict[str, Any] = {"name": name, "path": path, "instance": instance}
         if params:
             spec["params"] = params
+
         policy = entry.get("policy")
-        if isinstance(policy, dict) and policy:
-            spec["policy"] = dict(policy)
-        if len(spec) > 1:
+        if isinstance(policy, dict):
+            fresh_policy = target.get("policy") or {}
+            changed_policy = {
+                field: policy[field]
+                for field in _POLICY_FIELDS
+                if field in policy and policy[field] != fresh_policy.get(field)
+            }
+            if changed_policy:
+                spec["policy"] = changed_policy
+
+        if "params" in spec or "policy" in spec:
             node_overrides.append(spec)
+
     if node_overrides:
         override["nodes"] = node_overrides
-    return override
+    return override, warnings
 
 
 def _node_card(name: str, node: Any) -> NodeCard:
@@ -440,7 +490,6 @@ def _wire_plan(
     value_nodes = value_document.get("nodes", ())
 
     nodes: list[PlanNode] = []
-    params_by_name: dict[str, list[Param]] = {}
 
     for index, entry in enumerate(document.get("nodes", ())):
         value_entry = value_nodes[index] if index < len(value_nodes) else entry
@@ -462,23 +511,6 @@ def _wire_plan(
                 params=params,
             )
         )
-        params_by_name.setdefault(entry["name"], []).extend(params)
-
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for entry in document.get("nodes", ()):
-        groups.setdefault(entry["name"], []).append(entry)
-    for name, entries in groups.items():
-        if len(entries) < 2:
-            continue
-        signatures = {_params_signature(entry) for entry in entries}
-        if len(signatures) > 1:
-            warnings.append(
-                f"node {name!r} has multiple instances with differing parameter values; "
-                "the edit applies to every instance"
-            )
-            for param in params_by_name.get(name, []):
-                if not param.editable and param.note == "possibly set by flow code":
-                    param.editable = True
 
     wire_plan = WirePlan(
         schema_name=value_document.get("schema", PLAN_SCHEMA),
@@ -491,10 +523,6 @@ def _wire_plan(
         options=PlanOptions.model_validate(value_document.get("options") or {}),
     )
     return wire_plan, warnings
-
-
-def _params_signature(entry: dict[str, Any]) -> tuple[tuple[str, str], ...]:
-    return tuple(sorted((param["name"], repr(param.get("value"))) for param in entry["params"]))
 
 
 def _root_param(raw: dict[str, Any], value: Any) -> Param:

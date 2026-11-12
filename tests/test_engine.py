@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
 from seq_ext_gui.contracts import WorkerRequest
-from seq_ext_gui.engine import discover, execute, plan
+from seq_ext_gui.engine import _override_from_seed, discover, execute, plan
 
 DEFAULT_OPTIONS = {
     "max_workers": 16,
@@ -42,6 +43,8 @@ def test_plan_emits_the_v2_document_shape(sample_project) -> None:
     assert "root" not in document
     assert document["options"] == DEFAULT_OPTIONS
     assert {node["name"] for node in document["nodes"]} >= {"double", "scale", "gather"}
+    assert all(node["path"][0] == "root" for node in document["nodes"] if node["name"] != "gather")
+    assert {node["instance"] for node in document["nodes"] if node["name"] == "scale"} == {1, 2}
     assert document["edges"]
 
 
@@ -59,8 +62,8 @@ def test_plan_applies_the_editability_heuristic(sample_project) -> None:
     assert bound.editable is False
     assert bound.note == "set by flow code"
 
-    # ``double`` has several instances with different values.
-    assert any("double" in warning and "every instance" in warning for warning in result.warnings)
+    # Instances are edited independently, so no name-fan-out warning remains.
+    assert not any("every instance" in warning for warning in result.warnings)
 
 
 def test_plan_imports_a_hand_written_document(sample_project) -> None:
@@ -72,6 +75,8 @@ def test_plan_imports_a_hand_written_document(sample_project) -> None:
         "nodes": [
             {
                 "name": "scale",
+                "path": ["root", "scale"],
+                "instance": 1,
                 "params": [{"name": "factor", "type": "int", "default": 1, "value": 10}],
                 "policy": {"retries": 2, "timeout": 5.0},
             }
@@ -92,15 +97,125 @@ def test_plan_imports_a_hand_written_document(sample_project) -> None:
     assert document["options"]["fixed_clock"] is False
 
     scale_instances = [node for node in result.plan.nodes if node.name == "scale"]
-    assert scale_instances
+    assert len(scale_instances) == 3
+    edited = next(node for node in scale_instances if node.instance == 1)
+    assert edited.policy.retries == 2
+    assert edited.policy.timeout == 5.0
+    assert edited.policy.retry_delay_seconds == 0.0
+    factor = next(param for param in edited.params if param.name == "factor")
+    assert factor.value == 10
+    # Editability comes from fresh code values, not the imported edit.
+    assert factor.editable is True
+
+    # The edit targets one occurrence; its siblings keep the fresh defaults.
     for node in scale_instances:
-        assert node.policy.retries == 2
-        assert node.policy.timeout == 5.0
-        assert node.policy.retry_delay_seconds == 0.0
+        if node.instance == 1:
+            continue
+        assert node.policy.retries == 0
+        assert node.policy.timeout is None
+        other = next(param for param in node.params if param.name == "factor")
+        assert other.value == 1
+
+
+def test_override_targets_the_selected_identity_only(sample_project) -> None:
+    fresh = plan(_request(sample_project))
+    assert fresh.ok, fresh.error
+    assert fresh.plan is not None
+    document = fresh.plan.to_document()
+    seed = copy.deepcopy(document)
+    selected = next(
+        node
+        for node in seed["nodes"]
+        if node["name"] == "scale" and node["instance"] == 1
+    )
+    selected["params"][0]["value"] = 10
+    selected["policy"]["retries"] = 2
+
+    override, warnings = _override_from_seed(seed, document, {})
+
+    assert not warnings
+    assert override["nodes"] == [
+        {
+            "name": "scale",
+            "path": ["root", "scale"],
+            "instance": 1,
+            "params": [{"name": "factor", "value": 10}],
+            "policy": {"retries": 2},
+        }
+    ]
+
+
+def test_override_skips_unchanged_values(sample_project) -> None:
+    fresh = plan(_request(sample_project))
+    assert fresh.ok, fresh.error
+    assert fresh.plan is not None
+    document = fresh.plan.to_document()
+
+    override, warnings = _override_from_seed(document, document, {})
+
+    assert not warnings
+    assert "nodes" not in override
+
+
+def test_stale_identity_is_warned_and_not_applied_name_wide(sample_project) -> None:
+    seed = {
+        "schema": "flow-plan/2",
+        "nodes": [
+            {
+                "name": "scale",
+                "path": ["root", "scale"],
+                "instance": 99,
+                "params": [{"name": "factor", "value": 10}],
+                "policy": {"retries": 2},
+            }
+        ],
+    }
+
+    result = plan(_request(sample_project, plan=seed))
+
+    assert result.ok, result.error
+    assert any(
+        "node scale #99 no longer exists in the re-planned flow" in warning
+        for warning in result.warnings
+    )
+    assert result.plan is not None
+    for node in result.plan.nodes:
+        if node.name != "scale":
+            continue
+        assert node.policy.retries == 0
         factor = next(param for param in node.params if param.name == "factor")
-        assert factor.value == 10
-        # Editability comes from fresh code values, not the imported edit.
-        assert factor.editable is True
+        assert factor.value == 1
+
+
+def test_legacy_node_seed_is_skipped_with_a_warning(sample_project) -> None:
+    seed = {
+        "schema": "flow-plan/2",
+        "parameters": [
+            {"name": "n", "type": "int", "required": False, "default": 2, "value": 3}
+        ],
+        "nodes": [
+            {
+                "name": "scale",
+                "params": [{"name": "factor", "value": 10}],
+                "policy": {"retries": 2},
+            }
+        ],
+    }
+
+    result = plan(_request(sample_project, plan=seed))
+
+    assert result.ok, result.error
+    assert any("node scale has no identity" in warning for warning in result.warnings)
+    assert result.plan is not None
+    # Root parameters still apply.
+    parameters = {param.name: param.value for param in result.plan.parameters}
+    assert parameters["n"] == 3
+    for node in result.plan.nodes:
+        if node.name != "scale":
+            continue
+        assert node.policy.retries == 0
+        factor = next(param for param in node.params if param.name == "factor")
+        assert factor.value == 1
 
 
 def test_plan_rejects_a_non_v2_seed(sample_project) -> None:

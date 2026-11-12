@@ -57,8 +57,9 @@ restart; a running job must finish first.
   `plan.nodes[].policy` and reach the engine as `RunOptions.node_policies`.
 - **Flow selection is external**: the dropdown chooses the root node and is
   never written into the plan.
-- Edits are keyed by node **name**: all instances of a repeated node share an
-  edit.
+- Edits target the selected node occurrence: repeated nodes are labeled and
+  edited by identity (`name #instance`). Name-wide overrides remain an engine
+  capability, not the GUI default.
 
 See [`docs/architecture.md`](docs/architecture.md) for the wire contract and
 the subprocess protocol.

@@ -808,6 +808,16 @@ function displayParamValue(value, type) {
   return value;
 }
 
+function setNodeParamValue(node, name, value) {
+  for (const param of node.params || []) {
+    if (param.name === name) param.value = value;
+  }
+}
+
+function setNodePolicyValue(node, key, value) {
+  node.policy = { ...(node.policy || {}), [key]: value };
+}
+
 function renderNodeEditor() {
   ui.nodeEditor.replaceChildren();
   if (!state.plan) {
@@ -842,15 +852,6 @@ function renderNodeEditor() {
   }
 
   ui.selectedNode.textContent = `${node.name} #${node.instance}`;
-  const duplicates = (state.plan.nodes || []).filter(
-    (candidate) => candidate.name === node.name,
-  ).length;
-  if (duplicates > 1) {
-    const note = document.createElement("p");
-    note.className = "hint";
-    note.textContent = `"${node.name}" has ${duplicates} instances; edits apply to all of them.`;
-    ui.nodeEditor.append(note);
-  }
 
   const params = node.params || [];
   if (!params.length) {
@@ -859,12 +860,7 @@ function renderNodeEditor() {
     for (const param of params) {
       ui.nodeEditor.append(
         buildParam({ ...param, value: displayParamValue(param.value, param.type) }, (value) => {
-          for (const candidate of state.plan?.nodes || []) {
-            if (candidate.name !== node.name) continue;
-            for (const other of candidate.params || []) {
-              if (other.name === param.name) other.value = value;
-            }
-          }
+          setNodeParamValue(node, param.name, value);
           markDirty();
         }),
       );
@@ -930,10 +926,7 @@ function buildPolicyEditor(node) {
         return;
       }
       error.classList.add("hidden");
-      for (const candidate of state.plan?.nodes || []) {
-        if (candidate.name !== node.name) continue;
-        candidate.policy = { ...(candidate.policy || {}), [key]: parsed.value };
-      }
+      setNodePolicyValue(node, key, parsed.value);
       markDirty();
     });
 

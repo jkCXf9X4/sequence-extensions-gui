@@ -41,6 +41,8 @@ def test_worker_cli_writes_a_parseable_result(tmp_path: Path, sample_project) ->
         "nodes": [
             {
                 "name": "scale",
+                "path": ["root", "scale"],
+                "instance": 1,
                 "params": [{"name": "factor", "type": "int", "default": 1, "value": 10}],
                 "policy": {"retries": 2},
             }

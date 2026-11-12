@@ -81,9 +81,13 @@ def execute(request: WorkerRequest) -> WorkerResult
    `options`.
 4. A missing required root parameter is `ok=false` naming the parameters.
 5. `doc = plan_document(fn, options=run_options, **root_kwargs)`.
-6. If a seed plan was given, preserve its edits:
-   `apply_override(doc, {parameters, nodes[].params, nodes[].policy})`. Seed
-   `options` are not applied twice — they were already used to plan.
+6. If a seed plan was given, preserve its edits: match each seed node by exact
+   identity `(name, path, instance)` and call
+   `apply_override(doc, {parameters, nodes[]})` with `path`/`instance` on every
+   node entry. Only values that differ from the fresh plan are emitted. A seed
+   node without identity (legacy plan) or with an identity the fresh plan no
+   longer contains is skipped with a warning; there is no name-wide fallback.
+   Seed `options` are not applied twice — they were already used to plan.
 7. Return a `WirePlan` with the editability heuristic below. `editable`/`note`
    come from the freshly generated document (code values); the overlaid values
    are displayed, so an edited parameter that was re-evaluated stays editable.
@@ -109,9 +113,10 @@ def execute(request: WorkerRequest) -> WorkerResult
 - Node parameter whose value differs from its default: read-only with
   `note="possibly set by flow code"`.
 - `kind="gather"` nodes: no parameters.
-- Edits are keyed by node *name*, not instance. When a name has multiple
-  instances with differing parameter values, keep them editable but add a
-  warning: the edit applies to every instance.
+- Edits are keyed by node identity `(name, path, instance)`, so an edit hits
+  exactly one occurrence. Name-wide overrides remain an engine capability but
+  the GUI does not emit them. A stale or missing identity is skipped with a
+  warning rather than applied name-wide.
 
 ## HTTP API (all JSON, same origin)
 
@@ -166,12 +171,14 @@ the engine validates and refreshes the document against the selected workflow;
 with no flow selected the UI shows a clear message. Export downloads
 `planDocument(state.plan)` as `plan.json`.
 
-Root inputs and node parameters mutate `state.plan.parameters[]` and
-`state.plan.nodes[].params[]` directly; the policy editor mutates
-`state.plan.nodes[].policy` (all instances by name); option fields mutate
-`state.plan.options`. Any edit marks the plan dirty and re-enables Evaluate.
-`buildPayload()` returns `{flow_file, flow_name, plan}`; Evaluate sends the
-current plan (if any) as the seed, Execute sends it and requires one.
+Root inputs and node parameters mutate `state.plan.parameters[]` and the
+selected `state.plan.nodes[].params[]` directly; the policy editor mutates the
+selected `state.plan.nodes[].policy`; option fields mutate
+`state.plan.options`. Repeated nodes are shown and edited as `name #instance`,
+so one edit never touches a sibling occurrence. Any edit marks the plan dirty
+and re-enables Evaluate. `buildPayload()` returns
+`{flow_file, flow_name, plan}`; Evaluate sends the current plan (if any) as the
+seed, Execute sends it and requires one.
 
 Editable parameter widgets derive from `Param.type`: `bool` checkbox, `int`/
 `float` number input, `Path`/`str` text input, `list`/`dict` JSON textarea.

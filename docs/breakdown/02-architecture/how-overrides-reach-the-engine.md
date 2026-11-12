@@ -12,7 +12,7 @@ status: current
 Plan edits reach the engine through root kwargs, a node registry, and per-node policy; values the flow binds explicitly always win.
 
 - **Root parameters:** passed as keyword arguments, which always beat the registry.
-- **Node parameters:** `apply_override` edits the plan document; `execute_plan` rebuilds the node registry from `nodes[].params` (later occurrence wins).
+- **Node parameters:** `apply_override` edits the plan document; `execute_plan` rebuilds the node registry from `nodes[].params`, keyed by `(name, path, instance)` so each occurrence keeps its own value.
 - **Policy:** the document's `nodes[].policy` reaches the engine as `RunOptions.node_policies`, which beats an explicit `@node` keyword; runtime-only `node_defaults` fill the rest. No attribute mutation.
 - **Code wins:** a value the flow binds explicitly stays read-only and its edit is not applied (`REQ-001`).
-- **Name-keyed:** node edits match by name, so one edit hits every instance; differing instances stay editable with a warning.
+- **Identity-targeted:** a GUI node edit carries `path` and `instance` and hits exactly one occurrence; name-wide matching remains an engine capability but is not the GUI default. A stale or missing identity is skipped with a warning.
