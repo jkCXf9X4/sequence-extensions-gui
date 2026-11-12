@@ -60,14 +60,15 @@ restart; a running job must finish first.
 - Edits are keyed by node **name**: all instances of a repeated node share an
   edit.
 
-See `docs/architecture.md` for the wire contract and the subprocess protocol.
+See [`docs/architecture.md`](docs/architecture.md) for the wire contract and
+the subprocess protocol.
 
 ## Breakdown
 
-`docs/breakdown/` holds the project's current state: intent, use cases,
-architecture, verification, operation, review, and the open improvements. Start
-at `docs/breakdown/README.md`. It is the source of truth; this README is the
-front door.
+[`docs/breakdown/`](docs/breakdown/README.md) holds the project's current state:
+intent, use cases, architecture, verification, operation, review, and the open
+improvements. Start at its `README.md`. It is the source of truth; this README is
+the front door.
 
 ## Layout
 
