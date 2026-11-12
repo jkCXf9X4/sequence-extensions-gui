@@ -884,6 +884,7 @@ function showResult(result, finalState, topError) {
 
   const parts = [
     ["status", run?.status ?? finalState ?? "unknown"],
+    ["result", run?.result ?? null],
     ["duration", run?.duration_ms != null ? `${run.duration_ms} ms` : result?.duration_ms != null ? `${result.duration_ms} ms` : null],
     ["node", run?.node || null],
     ["attempt", run?.attempt != null ? String(run.attempt) : null],
@@ -906,7 +907,9 @@ function showResult(result, finalState, topError) {
     keyNode.textContent = `${key}:`;
     const valueNode = document.createElement("span");
     valueNode.className = "val";
-    valueNode.textContent = String(value);
+    const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+    valueNode.textContent = text.length > 600 ? `${text.slice(0, 597)}…` : text;
+    valueNode.title = text;
     banner.append(keyNode, valueNode);
     shown += 1;
   }
