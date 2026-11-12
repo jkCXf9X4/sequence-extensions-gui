@@ -15,6 +15,15 @@
   <main class="workspace">
     <section id="left-panel" class="panel left-panel" aria-label="Project, plan and run inputs">
       <div class="section">
+        <h2>Project root</h2>
+        <div class="root-row">
+          <input id="project-root" type="text" spellcheck="false" aria-label="Project root path">
+          <button type="button" id="open-root" class="small">Open</button>
+        </div>
+        <div id="root-status" class="muted" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="section">
         <div class="section-head">
           <h2>Project files</h2>
           <button type="button" id="refresh-tree" class="small">Refresh</button>
@@ -48,7 +57,7 @@
         </div>
         <input id="plan-file" type="file" accept=".json,application/json"
                class="hidden" aria-label="Import plan JSON">
-        <p class="muted">flow-plan/2 JSON · import or export the whole plan</p>
+        <p class="muted">flow-plan/2 JSON · import or export the whole plan; a flow with required inputs needs an imported plan before Evaluate</p>
       </div>
 
       <div class="section">

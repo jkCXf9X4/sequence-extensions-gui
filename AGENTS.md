@@ -30,8 +30,8 @@ re-implement the engine.
 ## Commands
 
 ```bash
-./setup.sh                   # create .venv and install requirements-dev.txt
-source .venv/bin/activate
+./setup.sh                   # create ../.venv and install requirements-dev.txt
+source ../.venv/bin/activate
 pytest                       # tests
 ruff check src tests         # lint
 seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
@@ -62,6 +62,7 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
   `pb check --strict` and `pb node-size --strict`.
 - Manual: `seq-ext-gui` with `--project-root ../sequence_extensions/examples/flow_runner`,
   select `flows.py` + `plan.json`, press Evaluate, inspect the graph, press Execute.
+  Switch the **Project root** field to verify another directory opens.
 
 ## Environment notes
 
@@ -69,3 +70,4 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 - The upstream `flow-runner` installed globally is stale; the editable checkout
   in `../sequence_extensions/` is the development target.
 - GitHub access uses HTTPS; SSH is blocked.
+- The venv lives at `../.venv`, outside both repositories, so no repo tracks it.

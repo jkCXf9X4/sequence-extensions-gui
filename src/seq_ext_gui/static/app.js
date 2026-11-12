@@ -7,6 +7,9 @@ const $ = (id) => document.getElementById(id);
 
 const ui = {
   health: $("health"),
+  projectRoot: $("project-root"),
+  openRoot: $("open-root"),
+  rootStatus: $("root-status"),
   crumbs: $("crumbs"),
   fileList: $("file-list"),
   refreshTree: $("refresh-tree"),
@@ -42,6 +45,7 @@ const ui = {
 };
 
 const PLAN_SCHEMA = "flow-plan/2";
+const PUT_METHOD = "PUT";
 
 const OPTION_DEFAULTS = {
   max_workers: 16,
@@ -103,12 +107,21 @@ function postJson(path, payload) {
   });
 }
 
+function putJson(path, payload) {
+  return api(path, {
+    method: PUT_METHOD,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 // ---------------------------------------------------------------- startup ----
 
 async function boot() {
   try {
     const health = await api("/api/health");
     state.projectRoot = health.project_root || "";
+    ui.projectRoot.value = state.projectRoot;
     ui.health.textContent = `ok · v${health.version ?? "?"} · ${state.projectRoot}`;
     ui.health.classList.remove("bad");
   } catch (error) {
@@ -130,6 +143,86 @@ async function loadTree(path) {
     renderCrumbs(state.dir);
     ui.fileList.replaceChildren(message(`Cannot list files: ${error.message}`, "error"));
   }
+}
+
+// -------------------------------------------------------------- project root ----
+
+function setRootStatus(text, tone) {
+  ui.rootStatus.textContent = text || "";
+  ui.rootStatus.classList.toggle("ok", tone === "ok");
+  ui.rootStatus.classList.toggle("bad", tone === "error");
+}
+
+function runActive() {
+  return (
+    state.source !== null ||
+    state.jobId !== null ||
+    !ui.cancel.classList.contains("hidden")
+  );
+}
+
+function setRootBusy(busy) {
+  ui.openRoot.disabled = busy;
+}
+
+function lockRootForRun() {
+  setRootBusy(true);
+  setRootStatus("cancel or wait for the run to finish", "error");
+}
+
+function unlockRootAfterRun() {
+  setRootBusy(runActive());
+  if (ui.rootStatus.textContent.includes("wait for the run to finish")) {
+    setRootStatus("");
+  }
+}
+
+async function switchRoot() {
+  if (runActive()) {
+    setRootStatus("cancel or wait for the run to finish", "error");
+    return;
+  }
+  const path = ui.projectRoot.value.trim();
+  if (!path) {
+    setRootStatus("enter an absolute path", "error");
+    return;
+  }
+
+  setRootBusy(true);
+  setRootStatus("switching…");
+  try {
+    const health = await putJson("/api/root", { path });
+    const root = health?.project_root || path;
+    state.projectRoot = root;
+    ui.projectRoot.value = root;
+    ui.health.textContent = `ok · v${health?.version ?? "?"} · ${root}`;
+    ui.health.classList.remove("bad");
+    resetForRoot();
+    setRootStatus("project root updated", "ok");
+    await loadTree("");
+  } catch (error) {
+    setRootStatus(`switch failed: ${error.message}`, "error");
+  } finally {
+    setRootBusy(runActive());
+  }
+}
+
+function resetForRoot() {
+  state.dir = "";
+  state.flowFile = null;
+  state.flowName = null;
+  state.selectedId = null;
+  ui.flowFile.textContent = "none";
+  ui.flowSelect.value = "";
+  populateFlowSelect([]);
+  ui.planFile.value = "";
+  clearPlan();
+  ui.log.replaceChildren();
+  ui.resultBanner.classList.add("hidden");
+  ui.resultBanner.replaceChildren();
+  setJobStatus("idle");
+  hideEvalError();
+  renderWarnings([]);
 }
 
 function renderCrumbs(path) {
@@ -767,6 +860,7 @@ async function execute() {
   ui.resultBanner.replaceChildren();
   ui.log.replaceChildren();
   setJobStatus("starting…");
+  lockRootForRun();
 
   try {
     const data = await postJson("/api/execute", buildPayload());
@@ -779,6 +873,7 @@ async function execute() {
     ui.cancel.classList.add("hidden");
     ui.execute.disabled = !state.plan;
     state.jobId = null;
+    unlockRootAfterRun();
   }
 }
 
@@ -827,6 +922,7 @@ function finishRun(data) {
   ui.cancel.classList.add("hidden");
   ui.cancel.disabled = false;
   ui.execute.disabled = !state.plan;
+  unlockRootAfterRun();
 }
 
 function setJobStatus(text) {
@@ -932,6 +1028,7 @@ async function cancelRun() {
       ui.cancel.classList.add("hidden");
       setJobStatus("job already finished");
       ui.execute.disabled = !state.plan;
+      unlockRootAfterRun();
     } else {
       setJobStatus("cancel failed");
       showEvalError(`Cancel failed: ${error.message}`);
@@ -1016,6 +1113,13 @@ ui.crumbs.addEventListener("click", (event) => {
 });
 
 ui.refreshTree.addEventListener("click", () => loadTree(state.dir));
+ui.openRoot.addEventListener("click", switchRoot);
+ui.projectRoot.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    switchRoot();
+  }
+});
 ui.evaluate.addEventListener("click", evaluate);
 ui.execute.addEventListener("click", execute);
 ui.cancel.addEventListener("click", cancelRun);

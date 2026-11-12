@@ -11,8 +11,9 @@ status: current
 
 Start the GUI with one command, open `http://127.0.0.1:8765`, choose `flows.py` and `plan.json`, then Evaluate and Execute.
 
-- **Install:** `./setup.sh` creates `.venv` with Python 3.11 and installs the dev requirements.
+- **Install:** `./setup.sh` creates `../.venv` with Python 3.11, then `source ../.venv/bin/activate`.
 - **Run:** `seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner` with the venv active.
 - **URL:** `http://127.0.0.1:8765` by default; `--host` and `--port` change it (`INFO-015`).
-- **Select:** pick `flows.py` then `plan.json` in the left panel; Evaluate fills the graph. Importing the plan is the same step as clicking it in the browser.
+- **Root:** the **Project root** field opens another directory; a running job must finish first (`CP-009`).
+- **Select:** pick `flows.py` then `plan.json`; clicking the JSON imports it, and Evaluate fills the graph. A flow with required root inputs needs that import first.
 - **Inspect:** click a node to edit an unbound parameter, press Execute, and read the streamed log.

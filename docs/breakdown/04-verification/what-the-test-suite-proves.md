@@ -17,4 +17,4 @@ The suite proves the static assets, engine adapter, API, job lifecycle, and real
 - **Fake isolation:** the fake worker keeps HTTP and job tests free of engine startup cost and flow behaviour, so a job bug shows without a real flow.
 - **Integration:** two `@pytest.mark.integration` API tests and one worker CLI test start the real worker and engine.
 - **Manual browser:** the evaluate-edit-execute walkthrough is a hand check, not an automated test (`TEST-004`).
-- **Count:** `pytest` collects 70 tests: static 25, jobs 11, API 16, files 6, engine 11, worker 1.
+- **Count:** `pytest` collects 72 tests: static 26, jobs 11, API 17, files 6, engine 11, worker 1.

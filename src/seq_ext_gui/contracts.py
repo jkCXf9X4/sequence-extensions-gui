@@ -180,6 +180,12 @@ class HealthResponse(BaseModel):
     project_root: str
 
 
+class RootRequest(BaseModel):
+    """An absolute directory to make the active project root."""
+
+    path: str
+
+
 def _param_document(param: Param) -> dict[str, Any]:
     return {
         "name": param.name,

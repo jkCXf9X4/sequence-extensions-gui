@@ -320,3 +320,39 @@ def test_execute_round_trips_an_imported_plan(sample_project) -> None:
 
     assert status["state"] == "succeeded", status
     assert status["result"]["run"]["result"] == [0, 2]
+
+
+def test_project_root_can_be_switched(sample_project, fake_worker: Path, tmp_path: Path) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "other.py").write_text("print('other')\n", encoding="utf-8")
+    app = create_app(sample_project.root, worker_cmd=[sys.executable, str(fake_worker)])
+
+    with TestClient(app) as test_client:
+        assert test_client.get("/api/health").json()["project_root"] == str(sample_project.root)
+
+        response = test_client.put("/api/root", json={"path": str(other)})
+        assert response.status_code == 200, response.text
+        assert response.json()["project_root"] == str(other)
+        assert test_client.get("/api/health").json()["project_root"] == str(other)
+
+        tree = test_client.get("/api/tree?path=").json()
+        assert [entry["name"] for entry in tree["entries"]] == ["other.py"]
+        assert test_client.get("/api/file?path=flow.py").status_code == 400
+
+        assert test_client.put("/api/root", json={"path": "relative"}).status_code == 400
+        missing = tmp_path / "missing"
+        assert test_client.put("/api/root", json={"path": str(missing)}).status_code == 400
+        assert test_client.get("/api/health").json()["project_root"] == str(other)
+
+        started = test_client.post(
+            "/api/execute", json={"flow_file": "other.py", "plan": MINIMAL_PLAN}
+        )
+        assert started.status_code == 200, started.text
+        job = started.json()["job_id"]
+        assert (other / ".seq_ext_gui" / "jobs" / job).is_dir()
+        test_client.post(f"/api/jobs/{job}/cancel")
+
+        back = test_client.put("/api/root", json={"path": str(sample_project.root)})
+        assert back.status_code == 200
+        assert test_client.get("/api/file?path=flow.py").status_code == 200

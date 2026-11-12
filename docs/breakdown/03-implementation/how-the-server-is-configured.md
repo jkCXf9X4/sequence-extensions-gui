@@ -14,5 +14,6 @@ status: current
 - **Flags:** `--host`, `--port`, `--project-root`.
 - **Defaults:** `127.0.0.1` and port `8765`.
 - **Root:** `SEQ_EXT_GUI_PROJECT_ROOT`, else the current directory; a non-directory is a parser error.
+- **Switch:** `PUT /api/root` accepts an absolute directory and re-points browsing and new jobs (`CP-009`).
 - **Timeouts:** `create_app` defaults to 120 s for evaluate and 600 s per execute job.
 - **Server:** `cli.py` calls `uvicorn.run(create_app(root), host=..., port=...)`.

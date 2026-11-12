@@ -17,3 +17,4 @@ The GUI is a local single-user preview and run tool; scheduling, code editing, h
 - **No scheduling or HPC:** each run starts from the browser; batch, cron, and HPC submission stay with `flow-runner` (`INFO-004`).
 - **No run-history database:** each job writes its own directory under `.seq_ext_gui/jobs`; no cross-run query (`INFO-020`).
 - **No plotting:** the graph shows node dependencies only, not result data (`INFO-011`).
+- **No cross-platform promise:** process-group cancel is POSIX; Windows and macOS stay unverified (`INFO-006`).

@@ -17,6 +17,7 @@ from .contracts import (
     HealthResponse,
     JobRequest,
     JobStatus,
+    RootRequest,
     TreeResponse,
     WorkerResult,
 )
@@ -78,7 +79,20 @@ def create_app(
 
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        return HealthResponse(version=__version__, project_root=str(root))
+        return HealthResponse(version=__version__, project_root=str(files.root))
+
+    @app.put("/api/root", response_model=HealthResponse)
+    def set_root(payload: RootRequest) -> HealthResponse:
+        """Switch the active project root; jobs created later use the new root."""
+        target = Path(payload.path).expanduser()
+        if not target.is_absolute():
+            raise ValueError("project root must be an absolute path")
+        if not target.is_dir():
+            raise ValueError(f"not a directory: {payload.path}")
+        resolved = target.resolve()
+        files.set_root(resolved)
+        jobs.set_root(resolved)
+        return HealthResponse(version=__version__, project_root=str(resolved))
 
     @app.get("/api/tree", response_model=TreeResponse)
     def tree(path: str = "") -> TreeResponse:

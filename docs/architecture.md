@@ -118,6 +118,7 @@ def execute(request: WorkerRequest) -> WorkerResult
 | Method | Path | Body / result |
 |---|---|---|
 | GET | `/api/health` | `HealthResponse` |
+| PUT | `/api/root` | `{"path": str}` -> `HealthResponse`; switches the active root |
 | GET | `/api/tree?path=` | `TreeResponse`; dirs plus `*.py`/`*.json` files, hidden and `__pycache__`/`.git`/`.venv`/`runs` skipped |
 | GET | `/api/file?path=` | `FileContent`; read `.py`/`.json` under the project root |
 | POST | `/api/evaluate` | `JobRequest` -> `WorkerResult` (synchronous, spawned worker) |
@@ -130,7 +131,8 @@ There is no project-file write endpoint: the GUI does not save project files. Al
 `path`/`flow_file` values are resolved against the configured project root;
 anything outside it is rejected with HTTP 400. `project_root` comes from
 `seq-ext-gui --project-root`, else `SEQ_EXT_GUI_PROJECT_ROOT`, else the current
-directory.
+directory. `PUT /api/root` replaces it at runtime; browsing and new jobs follow
+the active root, while a running job keeps the root it started with.
 
 SSE event shapes:
 
@@ -151,8 +153,8 @@ The stream closes after `done`. Late subscribers get the current status first.
 
 Two vertical panels, per the product request:
 
-- Left: project file browser (`.py`/`.json`), flow-file display and flow-name
-  dropdown, plan panel with **Import plan**/**Export plan**, plan option fields,
+- Left: project-root field with **Open**, project file browser (`.py`/`.json`),
+  flow-file display and flow-name dropdown, plan panel with **Import plan**/**Export plan**, plan option fields,
   **Evaluate** button.
 - Right: SVG DAG (oriented top-to-bottom, layered by longest path), node click
   selects it and opens the parameter and policy editor in a side column,

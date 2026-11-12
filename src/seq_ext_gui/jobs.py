@@ -70,6 +70,10 @@ class JobManager:
         self.timeout = float(job_timeout)
         self._jobs: dict[str, _Job] = {}
 
+    def set_root(self, root: Path) -> None:
+        """Use *root* for job directories created from now on."""
+        self.project_root = Path(root).expanduser().resolve()
+
     def status(self, job_id: str) -> JobStatus | None:
         job = self._jobs.get(job_id)
         return None if job is None else self._status(job)

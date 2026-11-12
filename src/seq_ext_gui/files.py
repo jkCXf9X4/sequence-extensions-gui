@@ -16,6 +16,9 @@ class ProjectFiles:
     def __init__(self, root: Path) -> None:
         self.root = Path(root).expanduser().resolve()
 
+    def set_root(self, root: Path) -> None:
+        self.root = Path(root).expanduser().resolve()
+
     def resolve(self, path: str | Path | None, *, must_exist: bool = False) -> Path:
         raw = Path(path) if path not in (None, "") else Path()
         candidate = raw if raw.is_absolute() else self.root / raw

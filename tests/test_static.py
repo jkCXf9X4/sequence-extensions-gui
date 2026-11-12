@@ -145,6 +145,32 @@ def test_plan_import_export_controls() -> None:
     assert "ui.exportPlan.addEventListener" in source
 
 
+def test_project_root_switch_controls() -> None:
+    html = read("index.html")
+    source = read("app.js")
+
+    for element_id in ("project-root", "open-root", "root-status"):
+        assert f'id="{element_id}"' in html, f"missing project root control #{element_id}"
+    assert 'aria-label="Project root path"' in html
+    assert re.search(
+        r'<div id="root-status"[^>]*\brole="status"[^>]*\baria-live="polite"',
+        html,
+    ), "root status must be a polite live region"
+    assert html.index('id="project-root"') < html.index('id="file-list"'), (
+        "project root controls must sit above the file browser"
+    )
+
+    assert "/api/root" in source, "app.js does not call /api/root"
+    assert 'putJson("/api/root", { path })' in source, "root switch must use PUT"
+    assert "function switchRoot" in source
+    assert 'ui.openRoot.addEventListener("click", switchRoot)' in source
+    assert 'ui.projectRoot.addEventListener("keydown"' in source, "Enter wiring is missing"
+    assert "health.project_root" in source
+
+    for text in (html, source):
+        assert not re.search(r"https?://", text, re.IGNORECASE), "external URL introduced"
+
+
 def test_file_browser_routes_py_and_json() -> None:
     source = read("app.js")
     assert 'lower.endsWith(".py")' in source, "clicking .py must select the workflow"

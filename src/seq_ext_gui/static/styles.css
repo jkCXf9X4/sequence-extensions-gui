@@ -255,6 +255,26 @@ input:disabled, select:disabled, textarea:disabled {
   margin-bottom: 6px;
 }
 
+.root-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.root-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#root-status {
+  min-height: 14px;
+  font-family: var(--mono);
+}
+
+#root-status.ok { color: var(--ok); }
+#root-status.bad { color: var(--err); }
+
 .opts-grid {
   display: grid;
   grid-template-columns: 100px minmax(0, 1fr);
