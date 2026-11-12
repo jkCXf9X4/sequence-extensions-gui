@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+runs/
+sessions/
+.pytest_cache/
+.ruff_cache/
+sequence_extensions/
+.seq_ext_gui/
+_out/

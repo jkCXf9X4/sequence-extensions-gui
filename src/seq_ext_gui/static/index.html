@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sequence_extensions flow studio</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">sequence_extensions <span>flow studio</span></div>
+    <div id="health" class="health" role="status" aria-live="polite">connecting…</div>
+  </header>
+
+  <main class="workspace">
+    <section id="left-panel" class="panel left-panel" aria-label="Project, config and run inputs">
+      <div class="section">
+        <div class="section-head">
+          <h2>Project files</h2>
+          <button type="button" id="refresh-tree" class="small">Refresh</button>
+        </div>
+        <nav id="crumbs" class="crumbs" aria-label="Project path"></nav>
+        <div id="file-list" class="file-list" role="listbox" aria-label="Project files"></div>
+      </div>
+
+      <div class="section">
+        <h2>Selection</h2>
+        <div class="field">
+          <span class="field-label">Flow file</span>
+          <output id="flow-file" class="path">none</output>
+        </div>
+        <div class="field">
+          <label class="field-label" for="flow-select">Flow name</label>
+          <select id="flow-select" disabled>
+            <option value="">(auto)</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">Config file</span>
+          <output id="config-file" class="path">none</output>
+        </div>
+      </div>
+
+      <div class="section config-section">
+        <div class="section-head">
+          <h2>TOML config</h2>
+          <span id="save-status" class="muted"></span>
+        </div>
+        <textarea id="toml-editor" class="toml-editor" spellcheck="false"
+                  aria-label="TOML config text"
+                  placeholder="Select a .toml file to load it here"></textarea>
+        <div class="row-actions">
+          <button type="button" id="save-config" disabled>Save TOML</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Run options</h2>
+        <div class="opts-grid">
+          <label for="opt-max-workers">max workers</label>
+          <input id="opt-max-workers" type="number" min="1" step="1" placeholder="inherit">
+          <label for="opt-retries">retries</label>
+          <input id="opt-retries" type="number" min="0" step="1" placeholder="inherit">
+          <label for="opt-retry-delay">retry delay (s)</label>
+          <input id="opt-retry-delay" type="number" min="0" step="0.1" placeholder="inherit">
+          <label for="opt-timeout">timeout (s)</label>
+          <input id="opt-timeout" type="number" min="0" step="0.1" placeholder="inherit">
+          <label for="opt-summary">summary</label>
+          <select id="opt-summary">
+            <option value="">inherit</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+          <label for="opt-fixed-clock">fixed clock</label>
+          <select id="opt-fixed-clock">
+            <option value="">inherit</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section eval-section">
+        <button type="button" id="evaluate" class="primary wide">Evaluate</button>
+        <div id="eval-error" class="error hidden" role="alert"></div>
+        <ul id="warnings" class="warnings hidden" aria-label="Warnings"></ul>
+      </div>
+    </section>
+
+    <section class="right" aria-label="Plan, parameters and logs">
+      <div class="panel graph-panel">
+        <div class="toolbar">
+          <h2>Dependency graph</h2>
+          <span id="dirty-hint" class="hint hidden">plan dirty — re-evaluate to refresh</span>
+          <div class="spacer"></div>
+          <button type="button" id="fit-graph" class="small">Fit</button>
+          <button type="button" id="execute" class="primary" disabled>Execute</button>
+          <button type="button" id="cancel" class="danger hidden">Cancel</button>
+        </div>
+        <div id="graph-wrap" class="graph-wrap">
+          <svg id="graph" role="group" aria-label="Flow dependency graph"></svg>
+          <div id="graph-empty" class="graph-empty">Evaluate a flow to see its graph</div>
+        </div>
+      </div>
+
+      <aside class="panel editor-panel" aria-label="Parameter editor">
+        <div class="section">
+          <div class="section-head">
+            <h2>Flow inputs</h2>
+            <span id="root-node" class="muted"></span>
+          </div>
+          <div id="root-editor" class="param-list">
+            <p class="muted">No plan loaded.</p>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-head">
+            <h2>Node parameters</h2>
+            <span id="selected-node" class="muted">none</span>
+          </div>
+          <div id="node-editor" class="param-list">
+            <p class="muted">Select a node in the graph.</p>
+          </div>
+        </div>
+      </aside>
+
+      <div class="panel log-panel">
+        <div class="toolbar">
+          <h2>Run log</h2>
+          <span id="job-status" class="muted">idle</span>
+          <div class="spacer"></div>
+          <button type="button" id="clear-log" class="small">Clear</button>
+        </div>
+        <div id="result-banner" class="result-banner hidden" role="status"></div>
+        <ol id="log-console" class="log-console" aria-live="polite" aria-label="Run log"></ol>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
