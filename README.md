@@ -20,8 +20,9 @@ uv run pytest
 uv run ruff check src tests
 ```
 
-The engine is a sibling checkout (`../sequence_extensions`), not a nested
-repository; `pyproject.toml` installs it editable through `[tool.uv.sources]`.
+The engine is checked out next to this repo and installed editable through
+`[tool.uv.sources]`; point that path elsewhere if your checkout lives in a
+different place.
 
 ## Run
 

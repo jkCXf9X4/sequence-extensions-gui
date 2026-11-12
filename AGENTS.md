@@ -17,9 +17,10 @@ re-implement the engine.
   - `cli.py` — `seq-ext-gui` entry point.
   - `static/` — browser UI (vanilla JS, no CDN, offline).
 - `tests/` — pytest suite; `uv run pytest`.
-- `../sequence_extensions/` — upstream engine checkout, a sibling git
-  repository. The GUI repo and the engine checkout are kept side by side; no
-  repository is nested inside another. Never edit the engine for GUI features.
+- `../sequence_extensions/` — the engine checkout used during development,
+  kept next to this repo so the editable path source resolves. Side-by-side
+  checkouts are a local convenience for cross-repo work, not a rule about how
+  the project must be laid out. Never edit the engine for GUI features.
 
 ## Commands
 
