@@ -16,7 +16,9 @@ re-implement the engine.
   - `files.py` — project-tree browsing restricted to the configured project root.
   - `cli.py` — `seq-ext-gui` entry point.
   - `static/` — browser UI (vanilla JS, no CDN, offline).
-- `tests/` — pytest suite; `uv run pytest`.
+- `tests/` — pytest suite; `pytest`.
+- `requirements-dev.txt` — editable engine checkout, then this package with `[dev]`.
+- `setup.sh` — idempotent venv creation and install.
 - `../sequence_extensions/` — the engine checkout used during development,
   kept next to this repo so the editable path source resolves. Side-by-side
   checkouts are a local convenience for cross-repo work, not a rule about how
@@ -25,10 +27,11 @@ re-implement the engine.
 ## Commands
 
 ```bash
-uv sync --extra dev          # create/refresh .venv with the editable upstream checkout
-uv run pytest                # tests
-uv run ruff check src tests  # lint
-uv run seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
+./setup.sh                   # create .venv and install requirements-dev.txt
+source .venv/bin/activate
+pytest                       # tests
+ruff check src tests         # lint
+seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 ```
 
 ## Rules
@@ -49,16 +52,14 @@ uv run seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 
 ## Verification
 
-- `uv run pytest` must pass.
-- `uv run ruff check src tests` must pass.
-- Manual: `uv run seq-ext-gui` with `--project-root ../sequence_extensions/examples/flow_runner`,
+- `pytest` must pass.
+- `ruff check src tests` must pass.
+- Manual: `seq-ext-gui` with `--project-root ../sequence_extensions/examples/flow_runner`,
   select `flows.py` + `campaign.toml`, press Evaluate, inspect the graph, press Execute.
 
 ## Environment notes
 
-- System `python3` is 3.10 and cannot run the engine. Use the uv-managed 3.11 venv.
+- System `python3` is 3.10 and cannot run the engine. `setup.sh` uses `python3.11`.
 - The upstream `flow-runner` installed globally is stale; the editable checkout
   in `../sequence_extensions/` is the development target.
 - GitHub access uses HTTPS; SSH is blocked.
-- If `uv` fails with `invalid peer certificate: UnknownIssuer`, the network
-  inspects TLS: prefix uv commands with `UV_NATIVE_TLS=1`.

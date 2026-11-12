@@ -26,9 +26,6 @@ dev = [
 [project.scripts]
 seq-ext-gui = "seq_ext_gui.cli:main"
 
-[tool.uv.sources]
-sequence-extensions-flow = { path = "../sequence_extensions", editable = true }
-
 [tool.setuptools.dynamic]
 version = { attr = "seq_ext_gui.__version__" }
 

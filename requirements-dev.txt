@@ -1,0 +1,4 @@
+# Development install: the editable engine checkout first, then this package.
+# The engine is a sibling checkout; adjust the path if it lives elsewhere.
+-e ../sequence_extensions
+-e ".[dev]"

@@ -15,19 +15,22 @@ imports your flow code; every evaluate or execute runs in a fresh subprocess.
 git clone https://github.com/jkCXf9X4/sequence-extensions-gui
 git clone https://github.com/pyssporg/sequence_extensions
 cd sequence-extensions-gui
-UV_NATIVE_TLS=1 uv sync --extra dev   # only needed behind a TLS-inspecting proxy
-uv run pytest
-uv run ruff check src tests
+./setup.sh
+source .venv/bin/activate
+pytest
+ruff check src tests
 ```
 
-The engine is checked out next to this repo and installed editable through
-`[tool.uv.sources]`; point that path elsewhere if your checkout lives in a
+`setup.sh` creates `.venv` with `python3.11` and installs
+`requirements-dev.txt`, which installs the sibling engine checkout editable
+before this package. Point that path elsewhere if your checkout lives in a
 different place.
 
 ## Run
 
 ```bash
-uv run seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
+source .venv/bin/activate
+seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 # open http://127.0.0.1:8765
 ```
 
