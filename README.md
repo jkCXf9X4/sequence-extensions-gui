@@ -1,9 +1,11 @@
 # sequence-extensions-gui
 
 Local web GUI for the [`sequence_extensions`](https://github.com/pyssporg/sequence_extensions)
-flow engine. Point it at a flow module and a TOML runner config, press
-**Evaluate** to see the dependency graph, edit node parameters, then press
-**Execute** and watch the run log stream in.
+flow engine. Point it at a workflow module, import a `flow-plan/2` JSON plan
+(or build one from the module), press **Evaluate** to see the dependency
+graph, edit parameters and run options, then press **Execute** and watch the
+run log stream in. The plan imports and exports as one JSON document and is
+the only runner configuration.
 
 Offline by design: no CDN, no build step, no telemetry. The web process never
 imports your flow code; every evaluate or execute runs in a fresh subprocess.
@@ -34,23 +36,27 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 # open http://127.0.0.1:8765
 ```
 
-Pick `flows.py` and `campaign.toml` in the left panel, press **Evaluate**, click
-a node, edit a parameter that the flow leaves unset, press **Execute**.
+Pick `flows.py` in the left panel (or click a `plan.json` to import it), press
+**Evaluate**, click a node, edit a parameter or policy that the flow leaves
+unset, press **Execute**. Use **Export plan** to download the current document
+as `plan.json`.
 
 Options: `--host`, `--port`, `--project-root`; `SEQ_EXT_GUI_PROJECT_ROOT` is the
 environment fallback.
 
 ## What it can and cannot change
 
-- **Root inputs and unbound node parameters** can be overridden. Values the flow
-  passes explicitly always win; those parameters are shown read-only.
-- **Run options** (`max_workers`, `log`, `summary`, `fixed_clock`, run-level
-  `retries`/`retry_delay_seconds`/`timeout`) are editable per run.
-- **Per-node policy** edits work by mutating `NodeFunction` attributes, which is
-  not upstream public API. The UI labels this and the engine keeps it isolated
-  in `engine.py`.
-- Overrides are keyed by node **name**: all instances of a repeated node share
-  an edit.
+- **Root inputs and unbound node parameters** can be edited in the plan. Values
+  the flow passes explicitly always win; those parameters are shown read-only.
+- **Run options** (`max_workers`, `summary`, `fixed_clock`, run-level
+  `retries`/`retry_delay_seconds`/`timeout`) are bound directly to the plan's
+  `options`; the log directory stays per run and is not part of the document.
+- **Per-node policy** is supported upstream: edits go into
+  `plan.nodes[].policy` and reach the engine as `RunOptions.node_policies`.
+- **Flow selection is external**: the dropdown chooses the root node and is
+  never written into the plan.
+- Edits are keyed by node **name**: all instances of a repeated node share an
+  edit.
 
 See `docs/architecture.md` for the wire contract and the subprocess protocol.
 

@@ -1,22 +1,20 @@
 """Plan and execute a flow module inside the worker process.
 
-Only this module imports ``sequence_extensions`` or user flow code.  The web
-process talks to it through :mod:`seq_ext_gui.worker`.
+The only configuration artifact is the engine's ``flow-plan/2`` JSON document.
+This module imports ``sequence_extensions`` and user flow code; the web process
+talks to it through :mod:`seq_ext_gui.worker`.
 """
 
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import hashlib
 import importlib
 import importlib.util
 import inspect
 import os
 import sys
-import tempfile
 import time
-import tomllib
 import traceback
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,22 +23,20 @@ from typing import Any
 
 from sequence_extensions.flow import (
     NodeFunction,
-    NodePolicy,
     RunOptions,
     apply_override,
-    execute_flow,
+    execute_plan,
     jsonable,
-    parameters_from_document,
     plan_document,
 )
-from sequence_extensions.flow_runner import RunnerConfig, find_nodes
+from sequence_extensions.flow_runner import find_nodes
 
 from .contracts import (
-    Overrides,
+    PLAN_SCHEMA,
     Param,
     PlanEdge,
     PlanNode,
-    PolicyEdit,
+    PlanOptions,
     RunResult,
     WirePlan,
     WorkerRequest,
@@ -59,33 +55,30 @@ class EngineError(ValueError):
         self.available_flows = list(available_flows or [])
 
 
-@dataclasses.dataclass
-class _Prepared:
-    fn: NodeFunction
-    selected: str
-    run_options: RunOptions
-    root_kwargs: dict[str, Any]
-    doc: dict[str, Any]
-    config: dict[str, Any]
-    warnings: list[str]
-    available_flows: list[str]
-
-
 def plan(request: WorkerRequest) -> WorkerResult:
     """Build the wire plan for ``request`` without executing user node bodies."""
     started = time.monotonic()
     try:
         with _working_directory(request) as flow_file:
-            prepared = _prepare(request, flow_file, execute=False)
-            wire_plan, plan_warnings = _wire_plan(prepared.doc)
+            selected, fn, available = _load_flow(request, flow_file)
+            seed = request.plan
+            if seed is not None:
+                _require_document(seed)
+            root_kwargs = _root_values(fn, seed)
+            fresh = plan_document(fn, options=_run_options(seed), **root_kwargs)
+            document = fresh
+            if seed is not None:
+                override = _override_from_seed(seed, fresh, root_kwargs)
+                if override:
+                    document = apply_override(fresh, override)
+            wire_plan, warnings = _wire_plan(fresh, values=document)
         return WorkerResult(
             ok=True,
             mode="plan",
-            flow_name=prepared.selected,
-            available_flows=prepared.available_flows,
+            flow_name=selected,
+            available_flows=available,
             plan=wire_plan,
-            config=prepared.config,
-            warnings=prepared.warnings + plan_warnings,
+            warnings=warnings,
             duration_ms=_elapsed_ms(started),
         )
     except Exception as exc:
@@ -93,94 +86,58 @@ def plan(request: WorkerRequest) -> WorkerResult:
 
 
 def execute(request: WorkerRequest) -> WorkerResult:
-    """Plan, apply node edits, and run the flow.  Flow failures are ``ok=false``."""
+    """Run the request's plan document.  Flow failures are ``ok=false``."""
     started = time.monotonic()
     try:
+        if request.plan is None:
+            raise EngineError("execute requires a plan")
         with _working_directory(request) as flow_file:
-            prepared = _prepare(request, flow_file, execute=True)
-            return _execute(request, prepared, started)
+            selected, fn, available = _load_flow(request, flow_file)
+            try:
+                run = execute_plan(fn, request.plan, log=request.log_dir)
+            except Exception as exc:
+                wire_plan, warnings = _wire_plan(request.plan)
+                return WorkerResult(
+                    ok=False,
+                    mode="execute",
+                    flow_name=selected,
+                    available_flows=available,
+                    plan=wire_plan,
+                    run=_run_result(getattr(exc, "run", None), exc),
+                    warnings=warnings,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    traceback=traceback.format_exc(),
+                    duration_ms=_elapsed_ms(started),
+                )
+            wire_plan, warnings = _wire_plan(request.plan)
+        return WorkerResult(
+            ok=True,
+            mode="execute",
+            flow_name=selected,
+            available_flows=available,
+            plan=wire_plan,
+            run=_run_result(run),
+            warnings=warnings,
+            duration_ms=_elapsed_ms(started),
+        )
     except Exception as exc:
         return _error_result(request, exc, started, "execute")
 
 
 # ---------------------------------------------------------------- #
-# Shared prepare path (architecture steps 1-8)
+# Import and flow selection
 # ---------------------------------------------------------------- #
 @contextlib.contextmanager
 def _working_directory(request: WorkerRequest) -> Iterator[Path]:
-    """Change into the request cwd (or the flow file's directory)."""
-    raw = Path(request.flow_file).expanduser()
-    if request.cwd:
-        target = Path(request.cwd).expanduser()
-    elif raw.is_absolute():
-        target = raw.parent
-    else:
-        target = Path.cwd()
+    """Change into the flow file's directory; there is no separate ``cwd``."""
+    flow_file = Path(request.flow_file).expanduser().resolve()
     previous = Path.cwd()
-    os.chdir(target)
+    os.chdir(flow_file.parent)
     try:
-        yield raw if raw.is_absolute() else Path.cwd() / raw
+        yield flow_file
     finally:
         os.chdir(previous)
-
-
-def _prepare(request: WorkerRequest, flow_file: Path, *, execute: bool) -> _Prepared:
-    cfg, config_data = _load_config(request)
-    module = _import_flow_module(flow_file)
-    nodes = find_nodes(module)
-    selected, fn = _select_flow(request, cfg, nodes)
-    warnings = _apply_policy(request.overrides.policy, nodes)
-    run_options = _build_run_options(cfg.options, request.overrides)
-    if execute and request.log_dir:
-        run_options = dataclasses.replace(run_options, log=Path(request.log_dir))
-    root_kwargs = _root_kwargs(fn, cfg.inputs, request.overrides.root)
-    doc = plan_document(fn, options=run_options, **root_kwargs)
-    return _Prepared(
-        fn=fn,
-        selected=selected,
-        run_options=run_options,
-        root_kwargs=root_kwargs,
-        doc=doc,
-        config=jsonable(config_data) if config_data else {},
-        warnings=warnings,
-        available_flows=sorted(nodes),
-    )
-
-
-def _load_config(request: WorkerRequest) -> tuple[RunnerConfig, dict[str, Any]]:
-    if request.config_text and request.config_text.strip():
-        return _config_from_text(request.config_text)
-    if request.config_file:
-        path = Path(request.config_file)
-        if hasattr(RunnerConfig, "from_dict"):
-            try:
-                with path.open("rb") as fh:
-                    data = tomllib.load(fh)
-            except OSError as exc:
-                raise EngineError(f"cannot read config file {path}: {exc}") from None
-            except tomllib.TOMLDecodeError as exc:
-                raise EngineError(f"{path}: invalid TOML: {exc}") from None
-            return RunnerConfig.from_dict(data, where=str(path)), data
-        return RunnerConfig.from_toml(path), {}
-    return RunnerConfig(), {}
-
-
-def _config_from_text(text: str) -> tuple[RunnerConfig, dict[str, Any]]:
-    try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise EngineError(f"invalid TOML: {exc}") from None
-    if hasattr(RunnerConfig, "from_dict"):
-        return RunnerConfig.from_dict(data, where="config_text"), data
-
-    # Older runners only accept a path; hand them a temporary TOML file.
-    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8") as fh:
-        fh.write(text)
-        name = fh.name
-    try:
-        return RunnerConfig.from_toml(name), data
-    finally:
-        Path(name).unlink(missing_ok=True)
 
 
 def _import_flow_module(path: str | Path, *, module_name: str | None = None) -> ModuleType:
@@ -223,11 +180,13 @@ def _import_flow_module(path: str | Path, *, module_name: str | None = None) -> 
     return module
 
 
-def _select_flow(
-    request: WorkerRequest, cfg: RunnerConfig, nodes: dict[str, NodeFunction]
-) -> tuple[str, NodeFunction]:
+def _load_flow(
+    request: WorkerRequest, flow_file: Path
+) -> tuple[str, NodeFunction, list[str]]:
+    module = _import_flow_module(flow_file)
+    nodes = find_nodes(module)
     available = sorted(nodes)
-    selected = request.flow_name or cfg.flow
+    selected = request.flow_name
     if selected is None:
         if len(available) != 1:
             listed = ", ".join(available) if available else "none"
@@ -243,60 +202,26 @@ def _select_flow(
             f"no flow {selected!r} in module; available: {listed}",
             available_flows=available,
         )
-    return selected, fn
+    return selected, fn, available
 
 
-def _apply_policy(edits: dict[str, PolicyEdit], nodes: dict[str, NodeFunction]) -> list[str]:
-    """Mutate ``NodeFunction`` policy attributes; upstream has no public API."""
-    warnings: list[str] = []
-    for name in sorted(edits):
-        edit = edits[name]
-        target = nodes.get(name)
-        if target is None:
-            warnings.append(f"policy override ignored for unknown node {name!r}")
-            continue
-        changes: list[str] = []
-        for field in ("retries", "retry_delay_seconds", "timeout"):
-            value = getattr(edit, field)
-            if value is not None:
-                setattr(target, field, value)
-                changes.append(f"{field}={value!r}")
-        if changes:
-            warnings.append(
-                f"policy override applied to node {name!r}: {', '.join(changes)} "
-                "(mutates NodeFunction attributes; unsupported upstream)"
-            )
-    return warnings
+# ---------------------------------------------------------------- #
+# Plan-document seeding
+# ---------------------------------------------------------------- #
+def _require_document(document: dict[str, Any]) -> None:
+    schema = document.get("schema")
+    if schema != PLAN_SCHEMA:
+        raise EngineError(f"plan schema must be {PLAN_SCHEMA!r}, got {schema!r}")
 
 
-def _build_run_options(base: RunOptions, overrides: Overrides) -> RunOptions:
-    options = base
-    if overrides.options is not None:
-        edit = overrides.options
-        values = {name: getattr(edit, name) for name in edit.model_fields_set}
-        if values:
-            options = dataclasses.replace(options, **values)
-
-    edit = overrides.node_defaults
-    if edit is not None:
-        current = options.node_defaults
-        default = current if isinstance(current, NodePolicy) else NodePolicy()
-        merged = NodePolicy(
-            retries=edit.retries if edit.retries is not None else default.retries,
-            retry_delay_seconds=(
-                edit.retry_delay_seconds
-                if edit.retry_delay_seconds is not None
-                else default.retry_delay_seconds
-            ),
-            timeout=edit.timeout if "timeout" in edit.model_fields_set else default.timeout,
-        )
-        options = dataclasses.replace(options, node_defaults=merged)
-    return options
+def _run_options(document: dict[str, Any] | None) -> RunOptions:
+    raw = (document or {}).get("options") or {}
+    options = PlanOptions.model_validate(raw)
+    return RunOptions(**options.model_dump())
 
 
-def _root_kwargs(
-    fn: NodeFunction, inputs: dict[str, Any], overrides: dict[str, Any]
-) -> dict[str, Any]:
+def _root_values(fn: NodeFunction, document: dict[str, Any] | None) -> dict[str, Any]:
+    """Decode the seed plan's root parameters into keyword arguments."""
     signature = inspect.signature(fn.fn)
     params = [
         parameter
@@ -304,15 +229,20 @@ def _root_kwargs(
         if parameter.kind in {parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY}
     ]
     types = {parameter.name: _annotation_name(parameter.annotation) for parameter in params}
-
-    # [inputs] are raw TOML values, exactly as the CLI binds them.
-    values = {name: value for name, value in inputs.items() if name in types}
-
-    unknown = sorted(set(overrides) - set(types))
+    values: dict[str, Any] = {}
+    unknown: list[str] = []
+    for entry in (document or {}).get("parameters", ()):
+        name = entry.get("name")
+        if name not in types:
+            if name is not None:
+                unknown.append(name)
+            continue
+        value = entry.get("value")
+        if value is not None:
+            values[name] = decode_value(value, types[name])
     if unknown:
-        raise EngineError("unknown root parameter(s): " + ", ".join(repr(name) for name in unknown))
-    for name, value in overrides.items():
-        values[name] = decode_value(value, types[name])
+        listed = ", ".join(sorted(repr(name) for name in unknown))
+        raise EngineError(f"unknown root parameter(s): {listed}")
 
     missing = [
         parameter.name
@@ -324,6 +254,46 @@ def _root_kwargs(
     return values
 
 
+def _override_from_seed(
+    seed: dict[str, Any], fresh: dict[str, Any], root_kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """Re-apply the seed plan's edits on top of the freshly planned document."""
+    override: dict[str, Any] = {}
+    if root_kwargs:
+        override["parameters"] = [
+            {"name": name, "value": value} for name, value in root_kwargs.items()
+        ]
+
+    param_types: dict[str, dict[str, str]] = {}
+    for entry in fresh["nodes"]:
+        types = param_types.setdefault(entry["name"], {})
+        for param in entry.get("params", ()):
+            types[param["name"]] = param.get("type", "")
+
+    node_overrides: list[dict[str, Any]] = []
+    for entry in seed.get("nodes", ()):
+        name = entry.get("name")
+        types = param_types.get(name, {})
+        spec: dict[str, Any] = {"name": name}
+        params = [
+            {
+                "name": param["name"],
+                "value": decode_value(param.get("value"), types.get(param["name"], "")),
+            }
+            for param in entry.get("params", ())
+        ]
+        if params:
+            spec["params"] = params
+        policy = entry.get("policy")
+        if isinstance(policy, dict) and policy:
+            spec["policy"] = dict(policy)
+        if len(spec) > 1:
+            node_overrides.append(spec)
+    if node_overrides:
+        override["nodes"] = node_overrides
+    return override
+
+
 def _annotation_name(annotation: Any) -> str:
     if annotation is inspect.Parameter.empty:
         return ""
@@ -333,64 +303,124 @@ def _annotation_name(annotation: Any) -> str:
 
 
 # ---------------------------------------------------------------- #
-# Execute path (architecture steps 9-11)
+# Wire plan and the documented editability heuristic
 # ---------------------------------------------------------------- #
-def _execute(request: WorkerRequest, prepared: _Prepared, started: float) -> WorkerResult:
-    doc = prepared.doc
-    node_types = {
-        entry["name"]: {param["name"]: param.get("type", "") for param in entry.get("params", [])}
-        for entry in doc["nodes"]
+def _wire_plan(
+    document: dict[str, Any], *, values: dict[str, Any] | None = None
+) -> tuple[WirePlan, list[str]]:
+    """Annotate ``document`` for the wire, taking values from ``values``."""
+    warnings: list[str] = []
+    value_document = values if values is not None else document
+    value_parameters = {
+        param["name"]: param.get("value") for param in value_document.get("parameters", ())
     }
-    node_overrides = []
-    for name, params in request.overrides.nodes.items():
-        if name not in node_types:
-            continue
-        node_overrides.append(
-            {
-                "name": name,
-                "params": [
-                    {"name": param, "value": decode_value(value, node_types[name].get(param, ""))}
-                    for param, value in params.items()
-                ],
-            }
-        )
-    edited = apply_override(doc, {"nodes": node_overrides}) if node_overrides else doc
-    registry = parameters_from_document(edited)
-    registry.pop(doc["root"], None)
-    run_options = dataclasses.replace(prepared.run_options, parameters=registry)
+    value_nodes = value_document.get("nodes", ())
 
-    wire_plan, plan_warnings = _wire_plan(doc, edited=edited)
-    warnings = prepared.warnings + plan_warnings
-    try:
-        run = execute_flow(prepared.fn, options=run_options, **prepared.root_kwargs)
-    except Exception as exc:
-        return WorkerResult(
-            ok=False,
-            mode="execute",
-            flow_name=prepared.selected,
-            available_flows=prepared.available_flows,
-            plan=wire_plan,
-            config=prepared.config,
-            run=_run_result(getattr(exc, "run", None), exc),
-            warnings=warnings,
-            error=str(exc),
-            error_type=type(exc).__name__,
-            traceback=traceback.format_exc(),
-            duration_ms=_elapsed_ms(started),
+    nodes: list[PlanNode] = []
+    params_by_name: dict[str, list[Param]] = {}
+
+    for index, entry in enumerate(document.get("nodes", ())):
+        value_entry = value_nodes[index] if index < len(value_nodes) else entry
+        value_params = {
+            param["name"]: param.get("value") for param in value_entry.get("params", ())
+        }
+        params = []
+        if entry.get("kind") != "gather":
+            for raw in entry.get("params", ()):
+                params.append(_node_param(raw, value_params.get(raw["name"], raw.get("value"))))
+        nodes.append(
+            PlanNode(
+                id=entry["id"],
+                name=entry["name"],
+                kind=entry.get("kind", "node"),
+                path=list(entry.get("path", ())),
+                instance=entry.get("instance", 1),
+                policy=policy_from_mapping(value_entry.get("policy")),
+                params=params,
+            )
         )
-    return WorkerResult(
-        ok=True,
-        mode="execute",
-        flow_name=prepared.selected,
-        available_flows=prepared.available_flows,
-        plan=wire_plan,
-        config=prepared.config,
-        run=_run_result(run),
-        warnings=warnings,
-        duration_ms=_elapsed_ms(started),
+        params_by_name.setdefault(entry["name"], []).extend(params)
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for entry in document.get("nodes", ()):
+        groups.setdefault(entry["name"], []).append(entry)
+    for name, entries in groups.items():
+        if len(entries) < 2:
+            continue
+        signatures = {_params_signature(entry) for entry in entries}
+        if len(signatures) > 1:
+            warnings.append(
+                f"node {name!r} has multiple instances with differing parameter values; "
+                "the edit applies to every instance"
+            )
+            for param in params_by_name.get(name, []):
+                if not param.editable and param.note == "possibly set by flow code":
+                    param.editable = True
+
+    wire_plan = WirePlan(
+        schema_name=value_document.get("schema", PLAN_SCHEMA),
+        parameters=[
+            _root_param(raw, value_parameters.get(raw["name"], raw.get("value")))
+            for raw in document.get("parameters", ())
+        ],
+        nodes=nodes,
+        edges=[PlanEdge.model_validate(edge) for edge in document.get("edges", ())],
+        options=PlanOptions.model_validate(value_document.get("options") or {}),
+    )
+    return wire_plan, warnings
+
+
+def _params_signature(entry: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((param["name"], repr(param.get("value"))) for param in entry["params"]))
+
+
+def _root_param(raw: dict[str, Any], value: Any) -> Param:
+    encoded, _editable, note = encode_value(value)
+    default, _default_editable, _default_note = encode_value(raw.get("default"))
+    return Param(
+        name=raw["name"],
+        type=raw.get("type", ""),
+        required=bool(raw.get("required")),
+        default=default,
+        value=encoded,
+        editable=True,
+        note=note,
     )
 
 
+def _node_param(raw: dict[str, Any], value: Any) -> Param:
+    encoded, encodable, encodable_note = encode_value(value)
+    default, _default_editable, _default_note = encode_value(raw.get("default"))
+    required = bool(raw.get("required"))
+    # Editability comes from the freshly planned code values, not from an
+    # imported edit: an edited-but-re-evaluated parameter stays editable.
+    code_value = raw.get("value")
+
+    if not encodable:
+        editable, note = False, encodable_note
+    elif required and code_value is not None:
+        editable, note = False, "set by flow code"
+    elif not required and code_value == raw.get("default"):
+        editable, note = True, None
+    elif code_value != raw.get("default"):
+        editable, note = False, "possibly set by flow code"
+    else:
+        editable, note = True, None
+
+    return Param(
+        name=raw["name"],
+        type=raw.get("type", ""),
+        required=required,
+        default=default,
+        value=encoded,
+        editable=editable,
+        note=note,
+    )
+
+
+# ---------------------------------------------------------------- #
+# Result helpers
+# ---------------------------------------------------------------- #
 def _run_result(run: Any, exc: Exception | None = None) -> RunResult:
     if run is None:
         if exc is None:
@@ -413,114 +443,6 @@ def _run_result(run: Any, exc: Exception | None = None) -> RunResult:
     )
 
 
-# ---------------------------------------------------------------- #
-# Wire plan and the documented editability heuristic
-# ---------------------------------------------------------------- #
-def _wire_plan(
-    doc: dict[str, Any], *, edited: dict[str, Any] | None = None
-) -> tuple[WirePlan, list[str]]:
-    warnings: list[str] = []
-    edited_nodes = edited["nodes"] if edited is not None else None
-    nodes: list[PlanNode] = []
-    params_by_name: dict[str, list[Param]] = {}
-
-    for index, entry in enumerate(doc["nodes"]):
-        value_entry = edited_nodes[index] if edited_nodes is not None else entry
-        value_params = {
-            param["name"]: param.get("value") for param in value_entry.get("params", [])
-        }
-        params = []
-        if entry.get("kind") != "gather":
-            for raw in entry.get("params", []):
-                params.append(_node_param(raw, value_params.get(raw["name"], raw.get("value"))))
-        nodes.append(
-            PlanNode(
-                id=entry["id"],
-                name=entry["name"],
-                kind=entry.get("kind", "node"),
-                path=list(entry.get("path", [])),
-                instance=entry.get("instance", 1),
-                policy=policy_from_mapping(entry.get("policy")),
-                params=params,
-            )
-        )
-        params_by_name.setdefault(entry["name"], []).extend(params)
-
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for entry in doc["nodes"]:
-        groups.setdefault(entry["name"], []).append(entry)
-    for name, entries in groups.items():
-        if len(entries) < 2:
-            continue
-        signatures = {_params_signature(entry) for entry in entries}
-        if len(signatures) > 1:
-            warnings.append(
-                f"node {name!r} has multiple instances with differing parameter values; "
-                "the edit applies to every instance"
-            )
-            for param in params_by_name.get(name, []):
-                if not param.editable and param.note == "possibly set by flow code":
-                    param.editable = True
-
-    wire_plan = WirePlan(
-        root=doc["root"],
-        parameters=[_root_param(raw) for raw in doc.get("parameters", [])],
-        nodes=nodes,
-        edges=[PlanEdge.model_validate(edge) for edge in doc.get("edges", [])],
-    )
-    return wire_plan, warnings
-
-
-def _params_signature(entry: dict[str, Any]) -> tuple[tuple[str, str], ...]:
-    return tuple(sorted((param["name"], repr(param.get("value"))) for param in entry["params"]))
-
-
-def _root_param(raw: dict[str, Any]) -> Param:
-    value, display, _editable, note = encode_value(raw.get("value"))
-    default, _default_display, _default_editable, _default_note = encode_value(raw.get("default"))
-    return Param(
-        name=raw["name"],
-        type=raw.get("type", ""),
-        required=bool(raw.get("required")),
-        default=default,
-        value=value,
-        display=display,
-        editable=True,
-        note=note,
-    )
-
-
-def _node_param(raw: dict[str, Any], value: Any) -> Param:
-    encoded, display, encodable, encodable_note = encode_value(value)
-    default, _default_display, _default_editable, _default_note = encode_value(raw.get("default"))
-    required = bool(raw.get("required"))
-
-    if not encodable:
-        editable, note = False, encodable_note
-    elif required and value is not None:
-        editable, note = False, "set by flow code"
-    elif not required and value == default:
-        editable, note = True, None
-    elif value != default:
-        editable, note = False, "possibly set by flow code"
-    else:
-        editable, note = True, None
-
-    return Param(
-        name=raw["name"],
-        type=raw.get("type", ""),
-        required=required,
-        default=default,
-        value=encoded,
-        display=display,
-        editable=editable,
-        note=note,
-    )
-
-
-# ---------------------------------------------------------------- #
-# Result helpers
-# ---------------------------------------------------------------- #
 def _error_result(
     request: WorkerRequest, exc: Exception, started: float, mode: str
 ) -> WorkerResult:

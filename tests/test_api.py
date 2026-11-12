@@ -1,4 +1,4 @@
-"""HTTP API tests using a fake worker; one integration test for the real worker."""
+"""HTTP API tests using a fake worker; integration tests for the real worker."""
 
 from __future__ import annotations
 
@@ -14,6 +14,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from seq_ext_gui.app import create_app
+
+MINIMAL_PLAN: dict[str, Any] = {
+    "schema": "flow-plan/2",
+    "parameters": [],
+    "nodes": [],
+    "edges": [],
+    "options": {},
+}
 
 FAKE_WORKER = '''
 import json
@@ -46,7 +54,8 @@ result_path.write_text(
         {
             "ok": True,
             "mode": request.get("mode", "plan"),
-            "flow_name": "root",
+            "flow_name": request.get("flow_name") or "root",
+            "plan": request.get("plan"),
             "duration_ms": 1,
         }
     ),
@@ -120,52 +129,81 @@ def test_tree(client: TestClient) -> None:
     body = response.json()
     assert body["path"] == ""
     names = [entry["name"] for entry in body["entries"]]
-    assert names == ["failing.py", "flow.py", "sample.toml"]
+    assert names == ["failing.py", "flow.py", "required.py"]
     assert all(entry["kind"] == "file" for entry in body["entries"])
 
 
-def test_file_read_and_toml_round_trip(client: TestClient, sample_project) -> None:
-    response = client.get("/api/file", params={"path": "sample.toml"})
+def test_file_reads_plans_and_flow_modules(client: TestClient, sample_project) -> None:
+    plan_path = sample_project.write_plan(MINIMAL_PLAN)
+    response = client.get("/api/file", params={"path": plan_path.name})
     assert response.status_code == 200
-    assert response.json()["content"] == sample_project.read_config()
+    assert json.loads(response.json()["content"])["schema"] == "flow-plan/2"
 
-    content = '[run]\nflow = "root"\nmax_workers = 4\n'
-    response = client.put("/api/file", params={"path": "edited.toml"}, json={"content": content})
+    response = client.get("/api/file", params={"path": "flow.py"})
     assert response.status_code == 200
-    assert response.json() == {"path": "edited.toml", "content": content}
+    assert "@node" in response.json()["content"]
 
-    response = client.get("/api/file", params={"path": "edited.toml"})
-    assert response.status_code == 200
-    assert response.json()["content"] == content
+
+def test_toml_files_are_not_readable(client: TestClient, sample_project) -> None:
+    (sample_project.root / "legacy.toml").write_text("[run]\n", encoding="utf-8")
+
+    response = client.get("/api/file", params={"path": "legacy.toml"})
+    assert response.status_code == 400
+    assert ".py/.json" in response.json()["detail"]
+
+
+def test_put_file_route_is_removed(client: TestClient) -> None:
+    response = client.put(
+        "/api/file",
+        params={"path": "plan.json"},
+        json={"content": '{"schema": "flow-plan/2"}'},
+    )
+    assert response.status_code == 405
 
 
 def test_file_paths_outside_root_are_400(client: TestClient) -> None:
     assert client.get("/api/file", params={"path": "../outside.txt"}).status_code == 400
     assert client.get("/api/tree", params={"path": ".."}).status_code == 400
-    response = client.put(
-        "/api/file",
-        params={"path": "../outside.toml"},
-        json={"content": "x = 1\n"},
-    )
-    assert response.status_code == 400
     response = client.post("/api/evaluate", json={"flow_file": "../outside.py"})
     assert response.status_code == 400
 
 
-def test_evaluate_returns_worker_result(client: TestClient) -> None:
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"config_file": "sample.toml"},
+        {"config_text": "[run]\n"},
+        {"cwd": "."},
+        {"overrides": {}},
+    ],
+)
+def test_removed_job_fields_are_rejected(client: TestClient, extra: dict) -> None:
+    payload = {"flow_file": "flow.py", **extra}
+    assert client.post("/api/evaluate", json=payload).status_code == 422
+    assert client.post("/api/execute", json=payload).status_code == 422
+
+
+def test_evaluate_returns_the_worker_result(client: TestClient) -> None:
     response = client.post(
         "/api/evaluate",
-        json={"flow_file": "flow.py", "config_file": "sample.toml"},
+        json={"flow_file": "flow.py", "flow_name": "root", "plan": MINIMAL_PLAN},
     )
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
     assert body["mode"] == "plan"
     assert body["flow_name"] == "root"
+    assert body["plan"]["schema"] == "flow-plan/2"
+    # PlanOptions fills concrete defaults for a document that omitted them.
+    assert body["plan"]["options"]["max_workers"] == 16
+    assert body["plan"]["options"]["timeout"] is None
 
 
 def test_execute_job_status_and_sse(client: TestClient) -> None:
-    response = client.post("/api/execute", json={"flow_file": "flow.py"})
+    response = client.post(
+        "/api/execute",
+        json={"flow_file": "flow.py", "flow_name": "root", "plan": MINIMAL_PLAN},
+    )
     assert response.status_code == 200
     job_id = response.json()["job_id"]
     assert isinstance(job_id, str) and job_id
@@ -234,29 +272,51 @@ def test_evaluate_sample_project_with_real_worker(sample_project) -> None:
     with TestClient(create_app(sample_project.root)) as test_client:
         response = test_client.post(
             "/api/evaluate",
-            json={"flow_file": "flow.py", "config_file": "sample.toml"},
+            json={"flow_file": "flow.py", "flow_name": "root"},
         )
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True, body
     assert body["plan"] is not None
-    assert body["plan"]["root"]
+    assert body["plan"]["schema"] == "flow-plan/2"
+    assert "root" not in body["plan"]
+    assert body["plan"]["options"]["max_workers"] == 16
+    assert {param["name"] for param in body["plan"]["parameters"]} == {"n", "factor"}
 
 
 @pytest.mark.integration
-def test_evaluate_keeps_run_option_fields_set(sample_project) -> None:
-    """An Overrides round-trip must not turn absent RunOptions fields into None."""
+def test_execute_round_trips_an_imported_plan(sample_project) -> None:
+    seed = {
+        "schema": "flow-plan/2",
+        "parameters": [
+            {"name": "n", "type": "int", "required": False, "default": 2, "value": 2}
+        ],
+        "nodes": [],
+        "edges": [],
+        "options": {"max_workers": 1},
+    }
+
     with TestClient(create_app(sample_project.root)) as test_client:
         response = test_client.post(
             "/api/evaluate",
+            json={"flow_file": "flow.py", "flow_name": "root", "plan": seed},
+        )
+        assert response.status_code == 200
+        planned = response.json()
+        assert planned["ok"] is True, planned
+        assert planned["plan"]["options"]["max_workers"] == 1
+
+        response = test_client.post(
+            "/api/execute",
             json={
                 "flow_file": "flow.py",
-                "config_file": "sample.toml",
-                "overrides": {"options": {"max_workers": 3, "summary": True}},
+                "flow_name": "root",
+                "plan": planned["plan"],
             },
         )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["ok"] is True, body
-    assert "root" in body["available_flows"]
-    assert body["plan"]["schema"] == "flow-plan/1"
+        assert response.status_code == 200
+        job_id = response.json()["job_id"]
+        status = wait_for_status(test_client, job_id)
+
+    assert status["state"] == "succeeded", status
+    assert status["result"]["run"]["result"] == [0, 2]

@@ -12,10 +12,10 @@ const ui = {
   refreshTree: $("refresh-tree"),
   flowFile: $("flow-file"),
   flowSelect: $("flow-select"),
-  configFile: $("config-file"),
-  toml: $("toml-editor"),
-  save: $("save-config"),
-  saveStatus: $("save-status"),
+  planStatus: $("plan-status"),
+  importPlan: $("import-plan"),
+  exportPlan: $("export-plan"),
+  planFile: $("plan-file"),
   evaluate: $("evaluate"),
   evalError: $("eval-error"),
   warnings: $("warnings"),
@@ -41,27 +41,31 @@ const ui = {
   optFixedClock: $("opt-fixed-clock"),
 };
 
+const PLAN_SCHEMA = "flow-plan/2";
+
+const OPTION_DEFAULTS = {
+  max_workers: 16,
+  summary: false,
+  fixed_clock: false,
+  retries: 0,
+  retry_delay_seconds: 0.0,
+  timeout: null,
+};
+
 const state = {
   projectRoot: "",
   dir: "",
   entries: [],
   flowFile: null,
-  configFile: null,
-  configText: "",
   flowName: null,
   plan: null,
   selectedId: null,
-  overrides: emptyOverrides(),
   dirty: false,
   jobId: null,
   source: null,
 };
 
 let widgetSeq = 0;
-
-function emptyOverrides() {
-  return { root: {}, nodes: {}, policy: {}, node_defaults: null, options: null };
-}
 
 function nextId(prefix) {
   widgetSeq += 1;
@@ -97,12 +101,6 @@ function postJson(path, payload) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-}
-
-function flowDir(path) {
-  if (!path) return null;
-  const index = path.lastIndexOf("/");
-  return index >= 0 ? path.slice(0, index) : null;
 }
 
 // ---------------------------------------------------------------- startup ----
@@ -159,7 +157,7 @@ function renderCrumbs(path) {
 function renderFiles(entries) {
   ui.fileList.replaceChildren();
   if (!entries.length) {
-    ui.fileList.append(message("No .py or .toml files here.", "empty"));
+    ui.fileList.append(message("No .py or .json files here.", "empty"));
     return;
   }
   for (const entry of entries) {
@@ -169,7 +167,7 @@ function renderFiles(entries) {
     button.dataset.path = entry.path;
     button.dataset.kind = entry.kind;
     button.setAttribute("role", "option");
-    const selected = entry.path === state.flowFile || entry.path === state.configFile;
+    const selected = entry.path === state.flowFile;
     button.setAttribute("aria-selected", selected ? "true" : "false");
     if (selected) {
       button.classList.add("selected");
@@ -203,34 +201,33 @@ async function selectFile(path) {
       hideEvalError();
       renderWarnings([]);
       populateFlowSelect([]);
-      resetPlan({ keepOverrides: false });
+      if (state.plan) {
+        // Keep an imported/edited plan so it can be evaluated against this flow.
+        ui.rootNode.textContent = "";
+        markDirty();
+      } else {
+        clearPlan();
+      }
     }
     renderFiles(state.entries);
     return;
   }
-  if (lower.endsWith(".toml")) {
+  if (lower.endsWith(".json")) {
     try {
       const data = await api(`/api/file?path=${encodeURIComponent(path)}`);
-      state.configFile = path;
-      state.configText = data?.content ?? "";
-      ui.configFile.textContent = path;
-      ui.toml.value = state.configText;
-      ui.save.disabled = false;
-      ui.saveStatus.textContent = "";
-      markDirty();
-      renderFiles(state.entries);
+      await importPlanText(data?.content ?? "", path);
     } catch (error) {
       showEvalError(`Cannot load ${path}: ${error.message}`);
     }
   }
 }
 
-function resetPlan({ keepOverrides }) {
+function clearPlan() {
   state.plan = null;
   state.selectedId = null;
   state.dirty = false;
-  if (!keepOverrides) state.overrides = emptyOverrides();
   ui.execute.disabled = true;
+  ui.exportPlan.disabled = true;
   ui.dirtyHint.classList.add("hidden");
   ui.graphEmpty.classList.remove("hidden");
   ui.graphEmpty.textContent = "Evaluate a flow to see its graph";
@@ -238,8 +235,10 @@ function resetPlan({ keepOverrides }) {
   ui.selectedNode.textContent = "none";
   ui.rootEditor.replaceChildren(message("No plan loaded.", "muted"));
   ui.nodeEditor.replaceChildren(message("Select a node in the graph.", "muted"));
+  ui.planStatus.textContent = "none";
   renderGraph(ui.graph, null);
-  readOptions();
+  syncOptions();
+  setOptionsEnabled(false);
 }
 
 function populateFlowSelect(flows) {
@@ -273,20 +272,109 @@ function markDirty() {
   ui.dirtyHint.classList.remove("hidden");
 }
 
+// Convert a wire/imported plan into the pure engine document. Display-only
+// fields (`editable`, `note`) and wire aliases are stripped.
+function planDocument(plan) {
+  if (!plan) return null;
+  const cleanParams = (params) =>
+    (Array.isArray(params) ? params : []).map((param) => ({
+      name: param.name,
+      type: param.type ?? "",
+      required: Boolean(param.required),
+      default: param.default ?? null,
+      value: param.value ?? null,
+    }));
+  const parameters = cleanParams(plan.parameters);
+  const nodes = (Array.isArray(plan.nodes) ? plan.nodes : []).map((node) => ({
+    id: node.id,
+    name: node.name,
+    kind: node.kind ?? "node",
+    path: Array.isArray(node.path) ? node.path : [],
+    instance: node.instance ?? 1,
+    policy: {
+      retries: node.policy?.retries ?? 0,
+      retry_delay_seconds: node.policy?.retry_delay_seconds ?? 0.0,
+      timeout: node.policy?.timeout ?? null,
+    },
+    params: cleanParams(node.params),
+  }));
+  const edges = (Array.isArray(plan.edges) ? plan.edges : []).map((edge) => ({
+    from: edge.from ?? edge.source,
+    to: edge.to ?? edge.target,
+  }));
+  const source = plan.options || {};
+  const options = {};
+  for (const [key, fallback] of Object.entries(OPTION_DEFAULTS)) {
+    options[key] = Object.prototype.hasOwnProperty.call(source, key) ? source[key] : fallback;
+  }
+  return { schema: PLAN_SCHEMA, parameters, nodes, edges, options };
+}
+
 function buildPayload() {
-  reconcileOverrides();
-  // The config's directory drives TOML-relative paths; "." means the project root.
-  const cwd = state.configFile
-    ? (flowDir(state.configFile) ?? ".")
-    : flowDir(state.flowFile);
   return {
     flow_file: state.flowFile,
-    config_file: state.configFile || null,
-    config_text: state.configFile ? state.configText : null,
     flow_name: state.flowName || null,
-    cwd,
-    overrides: JSON.parse(JSON.stringify(state.overrides)),
+    plan: state.plan ? planDocument(state.plan) : null,
   };
+}
+
+function applyPlan(plan) {
+  state.plan = plan;
+  state.selectedId = null;
+  state.dirty = false;
+  ui.dirtyHint.classList.add("hidden");
+  ui.execute.disabled = false;
+  ui.exportPlan.disabled = false;
+  ui.planStatus.textContent = PLAN_SCHEMA;
+  ui.graphEmpty.classList.add("hidden");
+  ui.rootNode.textContent = state.flowName || "";
+  syncOptions();
+  setOptionsEnabled(true);
+  renderGraph(ui.graph, plan, {
+    onSelect: selectNode,
+    selectedId: null,
+    emptyText: "Root flow — no child nodes.",
+  });
+  renderRootEditor();
+  renderNodeEditor();
+}
+
+async function importPlanText(text, label) {
+  let document;
+  try {
+    document = JSON.parse(text);
+  } catch (error) {
+    showEvalError(`Cannot import ${label}: invalid JSON (${error.message})`);
+    return;
+  }
+  if (!document || document.schema !== PLAN_SCHEMA) {
+    showEvalError(`Cannot import ${label}: schema must be "${PLAN_SCHEMA}".`);
+    return;
+  }
+  applyPlan(document);
+  markDirty();
+  if (!state.flowFile) {
+    showEvalError("Plan imported. Select a .py flow file, then press Evaluate.");
+    return;
+  }
+  await evaluate();
+}
+
+function exportPlan() {
+  if (!state.plan) {
+    showEvalError("Nothing to export: evaluate or import a plan first.");
+    return;
+  }
+  const text = JSON.stringify(planDocument(state.plan), null, 2);
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "plan.json";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function evaluate() {
@@ -311,7 +399,6 @@ async function evaluate() {
 function handleEvaluateResult(result) {
   if (!result || typeof result !== "object") {
     showEvalError("Evaluate returned an unexpected response.");
-    resetPlan({ keepOverrides: true });
     return;
   }
   if (Array.isArray(result.available_flows)) populateFlowSelect(result.available_flows);
@@ -319,21 +406,16 @@ function handleEvaluateResult(result) {
 
   if (!result.ok) {
     showEvalError(result.error || "Evaluate failed.", result.traceback);
-    resetPlan({ keepOverrides: true });
+    markDirty();
     return;
   }
   if (!result.plan) {
     showEvalError("Evaluate succeeded but returned no plan.");
-    resetPlan({ keepOverrides: true });
+    markDirty();
     return;
   }
 
   hideEvalError();
-  state.plan = result.plan;
-  state.selectedId = null;
-  state.dirty = false;
-  reconcileOverrides();
-  ui.dirtyHint.classList.add("hidden");
   if (result.flow_name) {
     state.flowName = result.flow_name;
     const known = [...ui.flowSelect.options].some(
@@ -348,16 +430,7 @@ function handleEvaluateResult(result) {
     }
     ui.flowSelect.value = result.flow_name;
   }
-  ui.graphEmpty.classList.add("hidden");
-  ui.rootNode.textContent = state.plan.root || "";
-  ui.execute.disabled = false;
-  renderGraph(ui.graph, state.plan, {
-    onSelect: selectNode,
-    selectedId: null,
-    emptyText: "Root flow — no child nodes.",
-  });
-  renderRootEditor();
-  renderNodeEditor();
+  applyPlan(result.plan);
 }
 
 function selectNode(id) {
@@ -367,103 +440,6 @@ function selectNode(id) {
 }
 
 // -------------------------------------------------------- parameter editor ----
-
-function sameValue(left, right) {
-  if (left === right) return true;
-  if (left === null || right === null || left === undefined || right === undefined) return false;
-  if (typeof left === "object" && typeof right === "object") {
-    try {
-      return JSON.stringify(left) === JSON.stringify(right);
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function hasOverride(origin, owner, name) {
-  if (origin === "root") {
-    return Object.prototype.hasOwnProperty.call(state.overrides.root, name);
-  }
-  const bag = state.overrides.nodes[owner];
-  return Boolean(bag && Object.prototype.hasOwnProperty.call(bag, name));
-}
-
-function currentOverride(origin, owner, name) {
-  if (origin === "root") return state.overrides.root[name];
-  return state.overrides.nodes[owner]?.[name];
-}
-
-function deleteOverride(origin, owner, name) {
-  if (origin === "root") {
-    delete state.overrides.root[name];
-    return;
-  }
-  const bag = state.overrides.nodes[owner];
-  if (!bag) return;
-  delete bag[name];
-  if (!Object.keys(bag).length) delete state.overrides.nodes[owner];
-}
-
-// Drop overrides the current plan would not accept: read-only params and nodes
-// that no longer exist must never be sent back to the engine.
-function reconcileOverrides() {
-  const plan = state.plan;
-  if (!plan) return;
-  const rootParams = Array.isArray(plan.parameters) ? plan.parameters : [];
-  const editableRoot = new Set(
-    rootParams.filter((param) => param && param.editable !== false).map((param) => param.name),
-  );
-  for (const name of Object.keys(state.overrides.root)) {
-    if (!editableRoot.has(name)) delete state.overrides.root[name];
-  }
-
-  const editableByNode = new Map();
-  for (const node of Array.isArray(plan.nodes) ? plan.nodes : []) {
-    if (!node || typeof node.name !== "string") continue;
-    let names = editableByNode.get(node.name);
-    if (!names) {
-      names = new Set();
-      editableByNode.set(node.name, names);
-    }
-    for (const param of Array.isArray(node.params) ? node.params : []) {
-      if (param && param.editable !== false) names.add(param.name);
-    }
-  }
-
-  for (const owner of Object.keys(state.overrides.nodes)) {
-    const bag = state.overrides.nodes[owner];
-    const allowed = editableByNode.get(owner);
-    if (!bag || !allowed) {
-      delete state.overrides.nodes[owner];
-      continue;
-    }
-    for (const name of Object.keys(bag)) {
-      if (!allowed.has(name)) delete bag[name];
-    }
-    if (!Object.keys(bag).length) delete state.overrides.nodes[owner];
-  }
-
-  for (const owner of Object.keys(state.overrides.policy)) {
-    if (!editableByNode.has(owner)) delete state.overrides.policy[owner];
-  }
-}
-
-function setOverride(origin, owner, name, value, original) {
-  if (sameValue(value, original)) {
-    if (hasOverride(origin, owner, name)) deleteOverride(origin, owner, name);
-    markDirty();
-    return;
-  }
-  if (origin === "root") {
-    state.overrides.root[name] = value;
-  } else {
-    const bag = state.overrides.nodes[owner] || {};
-    bag[name] = value;
-    state.overrides.nodes[owner] = bag;
-  }
-  markDirty();
-}
 
 function widgetKind(type) {
   const text = String(type || "").toLowerCase();
@@ -476,12 +452,10 @@ function widgetKind(type) {
   return "text";
 }
 
-function buildParam(param, origin, owner) {
+function buildParam(param, commit) {
   const editable = param.editable !== false;
   const kind = widgetKind(param.type);
-  const value = hasOverride(origin, owner, param.name)
-    ? currentOverride(origin, owner, param.name)
-    : param.value;
+  const value = param.value;
 
   const row = document.createElement("div");
   row.className = `param${editable ? "" : " readonly"}`;
@@ -522,7 +496,7 @@ function buildParam(param, origin, owner) {
     input.checked = Boolean(value);
     input.disabled = !editable;
     input.addEventListener("change", () => {
-      setOverride(origin, owner, param.name, input.checked, param.value);
+      commit(input.checked);
     });
   } else if (kind === "int" || kind === "float") {
     input = document.createElement("input");
@@ -543,7 +517,7 @@ function buildParam(param, origin, owner) {
         return;
       }
       setError(null);
-      setOverride(origin, owner, param.name, number, param.value);
+      commit(number);
     });
   } else if (kind === "json") {
     input = document.createElement("textarea");
@@ -556,7 +530,7 @@ function buildParam(param, origin, owner) {
       try {
         const parsed = JSON.parse(input.value);
         setError(null);
-        setOverride(origin, owner, param.name, parsed, param.value);
+        commit(parsed);
       } catch (parseError) {
         setError(`invalid JSON: ${parseError.message}`);
       }
@@ -568,7 +542,7 @@ function buildParam(param, origin, owner) {
     input.value = value === null || value === undefined ? "" : String(value);
     input.disabled = !editable;
     input.addEventListener("input", () => {
-      setOverride(origin, owner, param.name, input.value, param.value);
+      commit(input.value);
     });
   }
 
@@ -602,8 +576,14 @@ function renderRootEditor() {
     ui.rootEditor.append(message("No flow inputs.", "muted"));
     return;
   }
-  const rootName = state.plan.root || "root";
-  for (const param of params) ui.rootEditor.append(buildParam(param, "root", rootName));
+  for (const param of params) {
+    ui.rootEditor.append(
+      buildParam(param, (value) => {
+        param.value = value;
+        markDirty();
+      }),
+    );
+  }
 }
 
 function renderNodeEditor() {
@@ -637,16 +617,34 @@ function renderNodeEditor() {
   if (!params.length) {
     ui.nodeEditor.append(message("No parameters on this node.", "muted"));
   } else {
-    for (const param of params) ui.nodeEditor.append(buildParam(param, "node", node.name));
+    for (const param of params) {
+      ui.nodeEditor.append(
+        buildParam(param, (value) => {
+          for (const candidate of state.plan?.nodes || []) {
+            if (candidate.name !== node.name) continue;
+            for (const other of candidate.params || []) {
+              if (other.name === param.name) other.value = value;
+            }
+          }
+          markDirty();
+        }),
+      );
+    }
   }
   ui.nodeEditor.append(buildPolicyEditor(node));
 }
 
-function parsePolicyField(text, kind) {
-  if (text.trim() === "") return { empty: true };
+function parsePolicyField(text, kind, allowEmpty) {
+  if (text.trim() === "") {
+    return allowEmpty ? { value: null } : { error: "enter a number" };
+  }
   const number = Number(text);
-  if (!Number.isFinite(number) || (kind === "int" && !Number.isInteger(number))) {
-    return { error: kind === "int" ? "not an integer" : "not a number" };
+  if (
+    !Number.isFinite(number) ||
+    number < 0 ||
+    (kind === "int" && !Number.isInteger(number))
+  ) {
+    return { error: kind === "int" ? "not a non-negative integer" : "not a non-negative number" };
   }
   return { value: number };
 }
@@ -660,14 +658,14 @@ function buildPolicyEditor(node) {
 
   const grid = document.createElement("div");
   grid.className = "policy-grid";
-  const policy = state.overrides.policy[node.name] || {};
+  const policy = node.policy || {};
   const fields = [
-    ["retries", node.policy?.retries ?? 0, "int"],
-    ["retry_delay_seconds", node.policy?.retry_delay_seconds ?? 0, "float"],
-    ["timeout", node.policy?.timeout ?? null, "float"],
+    ["retries", "int", false],
+    ["retry_delay_seconds", "float", false],
+    ["timeout", "float", true],
   ];
 
-  for (const [key, original, kind] of fields) {
+  for (const [key, kind, allowEmpty] of fields) {
     const label = document.createElement("label");
     const inputId = nextId("policy");
     label.htmlFor = inputId;
@@ -677,31 +675,26 @@ function buildPolicyEditor(node) {
     input.id = inputId;
     input.step = kind === "int" ? "1" : "any";
     input.min = "0";
-    input.placeholder = key === "timeout" ? "inherit" : String(original ?? "");
-    const current = Object.prototype.hasOwnProperty.call(policy, key) ? policy[key] : original;
-    input.value = current === null || current === undefined ? "" : String(current);
+    input.placeholder = allowEmpty ? "none" : "0";
+    input.value =
+      policy[key] === null || policy[key] === undefined ? "" : String(policy[key]);
 
     const error = document.createElement("div");
     error.className = "field-error hidden";
     error.setAttribute("role", "alert");
 
     input.addEventListener("input", () => {
-      const parsed = parsePolicyField(input.value, kind);
-      const bag = state.overrides.policy[node.name] || {};
+      const parsed = parsePolicyField(input.value, kind, allowEmpty);
       if (parsed.error) {
         error.textContent = parsed.error;
         error.classList.remove("hidden");
         return;
       }
       error.classList.add("hidden");
-      const existed = Object.prototype.hasOwnProperty.call(bag, key);
-      if (parsed.empty) {
-        delete bag[key];
-      } else if (existed || !sameValue(parsed.value, original)) {
-        bag[key] = parsed.value;
+      for (const candidate of state.plan?.nodes || []) {
+        if (candidate.name !== node.name) continue;
+        candidate.policy = { ...(candidate.policy || {}), [key]: parsed.value };
       }
-      if (Object.keys(bag).length) state.overrides.policy[node.name] = bag;
-      else delete state.overrides.policy[node.name];
       markDirty();
     });
 
@@ -950,26 +943,56 @@ async function cancelRun() {
 
 // ------------------------------------------------------------ run options ----
 
+const OPTION_INPUTS = [
+  ui.optMaxWorkers,
+  ui.optRetries,
+  ui.optRetryDelay,
+  ui.optTimeout,
+  ui.optSummary,
+  ui.optFixedClock,
+];
+
+function setOptionsEnabled(enabled) {
+  for (const input of OPTION_INPUTS) input.disabled = !enabled;
+}
+
+function syncOptions() {
+  const options = { ...OPTION_DEFAULTS, ...(state.plan?.options || {}) };
+  ui.optMaxWorkers.value = String(options.max_workers);
+  ui.optRetries.value = String(options.retries);
+  ui.optRetryDelay.value = String(options.retry_delay_seconds);
+  ui.optTimeout.value =
+    options.timeout === null || options.timeout === undefined ? "" : String(options.timeout);
+  ui.optSummary.value = options.summary ? "true" : "false";
+  ui.optFixedClock.value = options.fixed_clock ? "true" : "false";
+}
+
 function readOptions() {
-  const options = {};
-  const number = (input, integer) => {
+  if (!state.plan) return;
+  if (!state.plan.options) state.plan.options = { ...OPTION_DEFAULTS };
+  const options = state.plan.options;
+  const number = (input, integer, minimum) => {
     const text = input.value.trim();
     if (text === "") return null;
     const value = Number(text);
-    if (!Number.isFinite(value) || (integer && !Number.isInteger(value))) return null;
+    if (!Number.isFinite(value) || value < minimum) return null;
+    if (integer && !Number.isInteger(value)) return null;
     return value;
   };
-  const maxWorkers = number(ui.optMaxWorkers, true);
-  const retries = number(ui.optRetries, true);
-  const retryDelay = number(ui.optRetryDelay, false);
-  const timeout = number(ui.optTimeout, false);
+  const maxWorkers = number(ui.optMaxWorkers, true, 1);
   if (maxWorkers !== null) options.max_workers = maxWorkers;
+  const retries = number(ui.optRetries, true, 0);
   if (retries !== null) options.retries = retries;
+  const retryDelay = number(ui.optRetryDelay, false, 0);
   if (retryDelay !== null) options.retry_delay_seconds = retryDelay;
-  if (timeout !== null) options.timeout = timeout;
-  if (ui.optSummary.value !== "") options.summary = ui.optSummary.value === "true";
-  if (ui.optFixedClock.value !== "") options.fixed_clock = ui.optFixedClock.value === "true";
-  state.overrides.options = Object.keys(options).length ? options : null;
+  if (ui.optTimeout.value.trim() === "") {
+    options.timeout = null;
+  } else {
+    const timeout = number(ui.optTimeout, false, 0);
+    if (timeout !== null) options.timeout = timeout;
+  }
+  options.summary = ui.optSummary.value === "true";
+  options.fixed_clock = ui.optFixedClock.value === "true";
   markDirty();
 }
 
@@ -993,66 +1016,37 @@ ui.crumbs.addEventListener("click", (event) => {
 });
 
 ui.refreshTree.addEventListener("click", () => loadTree(state.dir));
-ui.save.addEventListener("click", saveConfig);
 ui.evaluate.addEventListener("click", evaluate);
 ui.execute.addEventListener("click", execute);
 ui.cancel.addEventListener("click", cancelRun);
 ui.fitGraph.addEventListener("click", () => fitGraph(ui.graph));
 ui.clearLog.addEventListener("click", () => ui.log.replaceChildren());
+ui.importPlan.addEventListener("click", () => ui.planFile.click());
+ui.exportPlan.addEventListener("click", exportPlan);
+
+ui.planFile.addEventListener("change", () => {
+  const file = ui.planFile.files?.[0];
+  ui.planFile.value = "";
+  if (!file) return;
+  file
+    .text()
+    .then((text) => importPlanText(text, file.name))
+    .catch((error) => showEvalError(`Cannot read ${file.name}: ${error.message}`));
+});
 
 ui.flowSelect.addEventListener("change", () => {
   state.flowName = ui.flowSelect.value || null;
+  ui.rootNode.textContent = state.flowName || "";
   markDirty();
 });
 
-ui.toml.addEventListener("input", () => {
-  state.configText = ui.toml.value;
-  markDirty();
-});
-
-ui.toml.addEventListener("keydown", (event) => {
-  if (event.key !== "Tab" || event.shiftKey) return;
-  event.preventDefault();
-  const start = ui.toml.selectionStart;
-  const end = ui.toml.selectionEnd;
-  const text = ui.toml.value;
-  ui.toml.value = `${text.slice(0, start)}  ${text.slice(end)}`;
-  ui.toml.selectionStart = start + 2;
-  ui.toml.selectionEnd = start + 2;
-  state.configText = ui.toml.value;
-  markDirty();
-});
-
-async function saveConfig() {
-  if (!state.configFile) return;
-  ui.save.disabled = true;
-  ui.saveStatus.textContent = "saving…";
-  try {
-    await api(`/api/file?path=${encodeURIComponent(state.configFile)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: state.configText }),
-    });
-    ui.saveStatus.textContent = "saved";
-  } catch (error) {
-    ui.saveStatus.textContent = "save failed";
-    showEvalError(`Save failed: ${error.message}`);
-  } finally {
-    ui.save.disabled = false;
-  }
-}
-
-for (const input of [
-  ui.optMaxWorkers,
-  ui.optRetries,
-  ui.optRetryDelay,
-  ui.optTimeout,
-  ui.optSummary,
-  ui.optFixedClock,
-]) {
+for (const input of OPTION_INPUTS) {
   input.addEventListener("input", readOptions);
   input.addEventListener("change", readOptions);
 }
+
+syncOptions();
+setOptionsEnabled(false);
 
 boot().catch((error) => {
   ui.health.textContent = `startup failed: ${error.message}`;

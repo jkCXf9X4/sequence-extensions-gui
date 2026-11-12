@@ -13,5 +13,5 @@ Run `./setup.sh`, activate the venv, then run pytest and ruff; the engine checko
 
 - **Install:** `./setup.sh` creates `.venv` with `python3.11` and installs `requirements-dev.txt`.
 - **Engine layout:** `requirements-dev.txt` installs `-e ../sequence_extensions`, so the engine checkout sits beside the GUI repo (`INFO-017`).
-- **Test:** `pytest` collects 51 tests (`TEST-001`).
+- **Test:** `pytest` collects 70 tests (`TEST-001`).
 - **Lint:** `ruff check src tests`.

@@ -1,18 +1,18 @@
 ---
 id: CP-008
 type: capability
-title: Save a config edit
-summary: Persist TOML changes back to the project file
+title: Save a plan edit
+summary: Export the edited plan as a plan.json download
 date: 2026-11-12
 status: current
 ---
 
-# Save a config edit
+# Save a plan edit
 
-The operator edits the config text and saves it back to the project file on an explicit action; parse errors surface at Evaluate.
+The operator edits the plan in the UI and exports it as a `plan.json` download on an explicit action; the imported document is validated at Evaluate.
 
-- **Request:** "keep this config change in the project."
-- **Goal:** the file on disk matches the editor.
-- **Observable outcome:** Save writes only the selected config and reports saved or failed; nothing is written until Save is pressed.
-- **Where it fits:** after a failure points at the config (`CP-007`); the saved text feeds the next Evaluate (`CP-003`).
-- **Where it strains:** Save does not parse; malformed TOML saves and fails at the next Evaluate.
+- **Request:** "keep this plan change in a file I can commit or share."
+- **Goal:** the downloaded document matches the plan the UI shows.
+- **Observable outcome:** Export downloads the current `flow-plan/2` document as `plan.json`; the GUI writes no project file and nothing is downloaded until Export is pressed.
+- **Where it fits:** after a run or a plan edit (`CP-007`); the exported document can be re-imported and feeds the next Evaluate (`CP-003`).
+- **Where it strains:** Export strips the editability annotations; a hand-edited JSON file is checked only when it is imported or evaluated.

@@ -264,13 +264,24 @@ def test_evaluate_timeout(tmp_path: Path, fake_worker: Path) -> None:
 def test_request_file_is_worker_contract(tmp_path: Path, fake_worker: Path) -> None:
     async def run() -> None:
         manager = make_manager(tmp_path, fake_worker)
-        job_id = await manager.start(JobRequest(flow_file="flow.py", config_text="[run]\n"))
+        plan = {
+            "schema": "flow-plan/2",
+            "parameters": [{"name": "n", "type": "int", "value": 3}],
+            "nodes": [],
+            "edges": [],
+            "options": {"max_workers": 2},
+        }
+        job_id = await manager.start(
+            JobRequest(flow_file="flow.py", flow_name="root", plan=plan)
+        )
         status = await wait_for(
             lambda: terminal_status(manager, job_id)
         )
         request = json.loads((Path(status.log_dir).parent / "request.json").read_text())
         assert request["mode"] == "execute"
         assert request["log_dir"] == status.log_dir
-        assert request["config_text"] == "[run]\n"
+        assert request["flow_name"] == "root"
+        assert request["plan"] == plan
+        assert {"config_file", "config_text", "cwd", "overrides"}.isdisjoint(request)
 
     asyncio.run(run())

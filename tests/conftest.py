@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -32,6 +34,21 @@ def root(n: int = 2, factor: int = 3) -> list:
     return gather([scale.submit(item) for item in doubled])
 '''
 
+REQUIRED_FLOW = '''\
+"""Sample flow with a required root input."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from sequence_extensions.flow import node
+
+
+@node
+def needs_input(cases_dir: Path) -> str:
+    return str(cases_dir)
+'''
+
 FAILING_FLOW = '''\
 """Sample flow whose child always fails."""
 
@@ -50,29 +67,38 @@ def failing() -> None:
     return boom.submit()
 '''
 
-SAMPLE_CONFIG = """\
-[run]
-module = "flow"
-flow = "root"
-log = "_out/runs"
-max_workers = 2
-
-[node]
-retries = 0
-
-[inputs]
-n = 3
-"""
+#: A hand-written ``flow-plan/2`` seed: only the values a user edited.  The GUI
+#: imports a document like this, and ``engine.plan`` folds it onto fresh code.
+SAMPLE_PLAN: dict[str, Any] = {
+    "schema": "flow-plan/2",
+    "parameters": [
+        {"name": "n", "type": "int", "required": False, "default": 2, "value": 3}
+    ],
+    "nodes": [
+        {
+            "name": "scale",
+            "params": [
+                {"name": "factor", "type": "int", "required": False, "default": 1, "value": 10}
+            ],
+            "policy": {"retries": 2},
+        }
+    ],
+    "edges": [],
+    "options": {"max_workers": 2},
+}
 
 
 @dataclass(frozen=True)
 class SampleProject:
     root: Path
     flow: Path
-    config: Path
+    required: Path
+    failing: Path
 
-    def read_config(self) -> str:
-        return self.config.read_text(encoding="utf-8")
+    def write_plan(self, document: dict[str, Any], name: str = "plan.json") -> Path:
+        path = self.root / name
+        path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        return path
 
 
 @pytest.fixture
@@ -91,7 +117,27 @@ def sample_project(tmp_path: Path) -> SampleProject:
     root.mkdir()
     flow = root / "flow.py"
     flow.write_text(SAMPLE_FLOW, encoding="utf-8")
-    (root / "failing.py").write_text(FAILING_FLOW, encoding="utf-8")
-    config = root / "sample.toml"
-    config.write_text(SAMPLE_CONFIG, encoding="utf-8")
-    return SampleProject(root=root, flow=flow, config=config)
+    required = root / "required.py"
+    required.write_text(REQUIRED_FLOW, encoding="utf-8")
+    failing = root / "failing.py"
+    failing.write_text(FAILING_FLOW, encoding="utf-8")
+    return SampleProject(root=root, flow=flow, required=required, failing=failing)
+
+
+@pytest.fixture
+def sample_plan(sample_project: SampleProject) -> dict[str, Any]:
+    """A full ``flow-plan/2`` document generated from the hand-written seed."""
+    from seq_ext_gui.contracts import WorkerRequest
+    from seq_ext_gui.engine import plan
+
+    result = plan(
+        WorkerRequest(
+            mode="plan",
+            flow_file=str(sample_project.flow),
+            flow_name="root",
+            plan=SAMPLE_PLAN,
+        )
+    )
+    assert result.ok, result.error
+    assert result.plan is not None
+    return result.plan.to_document()

@@ -9,10 +9,10 @@ status: current
 
 # How to run the GUI locally
 
-Start the GUI with one command, open `http://127.0.0.1:8765`, choose `flows.py` and `campaign.toml`, then Evaluate and Execute.
+Start the GUI with one command, open `http://127.0.0.1:8765`, choose `flows.py` and `plan.json`, then Evaluate and Execute.
 
 - **Install:** `./setup.sh` creates `.venv` with Python 3.11 and installs the dev requirements.
 - **Run:** `seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner` with the venv active.
 - **URL:** `http://127.0.0.1:8765` by default; `--host` and `--port` change it (`INFO-015`).
-- **Select:** pick `flows.py` then `campaign.toml` in the left panel; Evaluate fills the graph.
+- **Select:** pick `flows.py` then `plan.json` in the left panel; Evaluate fills the graph. Importing the plan is the same step as clicking it in the browser.
 - **Inspect:** click a node to edit an unbound parameter, press Execute, and read the streamed log.

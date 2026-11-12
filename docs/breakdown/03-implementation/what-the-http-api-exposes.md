@@ -12,7 +12,7 @@ status: current
 The API is a same-origin JSON surface plus one SSE stream; evaluate is synchronous and execute is a background job.
 
 - **Health:** `GET /api/health` returns version and project root.
-- **Files:** `GET /api/tree`, `GET /api/file`, `PUT /api/file`.
+- **Files:** `GET /api/tree` and `GET /api/file` list and read `.py`/`.json`; there is no write endpoint.
 - **Evaluate:** `POST /api/evaluate` runs a plan-mode worker and returns its `WorkerResult` directly.
 - **Execute:** `POST /api/execute` returns `{"job_id": ...}` immediately.
 - **Jobs:** `GET /api/jobs/{id}`, `GET /api/jobs/{id}/events`, `POST /api/jobs/{id}/cancel`.

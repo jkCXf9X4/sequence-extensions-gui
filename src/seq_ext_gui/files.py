@@ -1,16 +1,13 @@
-"""Project-root-confined file browsing and TOML editing."""
+"""Project-root-confined browsing of flow modules and plan documents."""
 
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 
 from .contracts import FileContent, FileEntry, TreeResponse
 
-TREE_SUFFIXES = {".py", ".toml"}
+TREE_SUFFIXES = {".py", ".json"}
 SKIP_DIRS = {"__pycache__", ".git", ".venv", "runs", ".seq_ext_gui"}
-MAX_WRITE_BYTES = 1024 * 1024
 
 
 class ProjectFiles:
@@ -94,35 +91,9 @@ class ProjectFiles:
     def read(self, path: str | Path) -> FileContent:
         target = self.resolve(path, must_exist=True)
         if not target.is_file() or target.suffix not in TREE_SUFFIXES:
-            raise ValueError(f"not a readable .py/.toml file: {path!r}")
+            raise ValueError(f"not a readable .py/.json file: {path!r}")
         try:
             content = target.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError(f"file is not valid UTF-8: {path!r}") from exc
-        return FileContent(path=self.relative(target), content=content)
-
-    def write(self, path: str | Path, content: str) -> FileContent:
-        target = self.resolve(path)
-        if target.suffix != ".toml":
-            raise ValueError(f"only .toml files can be written: {path!r}")
-        data = content.encode("utf-8")
-        if len(data) > MAX_WRITE_BYTES:
-            raise ValueError(f"content exceeds the {MAX_WRITE_BYTES} byte limit")
-        parent = target.parent
-        if not parent.is_dir():
-            raise ValueError(f"parent directory does not exist: {path!r}")
-
-        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=parent)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_name, target)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except FileNotFoundError:
-                pass
-            raise
         return FileContent(path=self.relative(target), content=content)

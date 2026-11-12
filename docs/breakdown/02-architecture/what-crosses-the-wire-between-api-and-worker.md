@@ -12,7 +12,6 @@ status: current
 `contracts.py` defines every model that crosses between API and worker; the wire data is JSON files.
 
 - **Single model:** `JobRequest`, `WorkerRequest`, `WorkerResult`, `JobStatus`, `WirePlan`, and the file payloads live in one module.
-- **Request file:** written with `exclude_unset=True`, so absent fields stay absent instead of becoming null.
-- **Partial options:** `model_fields_set` survives the dump, so an unset `overrides.options` field is not reset.
-- **Result file:** written with `by_alias=True`; `schema`, `from`, and `to` are aliases the browser expects.
+- **Request file:** `JobRequest` carries `flow_file`, optional `flow_name`, and the optional `plan` document; `WorkerRequest` adds `mode` and `log_dir`. Absent fields stay absent, and the plan, when present, is authoritative.
+- **Result file:** written with `by_alias=True`; `schema`, `from`, and `to` are aliases the browser expects. It carries the plan, the run account, warnings, and any error.
 - **Direction:** the API writes a request; the worker writes a result; neither shares memory with the other.

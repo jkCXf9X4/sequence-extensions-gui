@@ -9,7 +9,7 @@ re-implement the engine.
 
 - `src/seq_ext_gui/` — Python package (src layout, Python >= 3.11).
   - `contracts.py` — wire models shared by API and worker. Single source of truth.
-  - `engine.py` — import a flow module by path, plan, apply overrides, execute.
+  - `engine.py` — import a flow module by path, plan, apply plan edits, execute.
   - `worker.py` — one-shot subprocess entry point: request JSON in, result JSON out.
   - `app.py` — FastAPI application and endpoints.
   - `jobs.py` — job lifecycle, subprocess supervision, run-log tailing.
@@ -40,15 +40,16 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 ## Rules
 
 1. **Engine API only.** Call `plan_document`, `apply_override`,
-   `parameters_from_document`, `execute_flow`, `RunOptions`, `NodePolicy`.
+   `execute_plan`, `RunOptions`, `NodePolicy`, `jsonable`, `find_nodes`.
    Never copy engine logic into the GUI.
 2. **Isolation.** Every evaluate/execute runs in a fresh subprocess. The web
    process never imports user flow modules.
 3. **Code wins.** Values a flow binds explicitly cannot be overridden. Mark
    such parameters read-only in the UI; do not pretend an edit took effect.
-4. **Per-node policy is unsupported upstream.** It is applied by mutating
-   `NodeFunction` attributes in the worker. Keep it isolated in `engine.py`,
-   behind `overrides.policy`, and document it.
+4. **Per-node policy goes through the plan.** It is supported upstream:
+   edits live in `state.plan.nodes[].policy` and reach the engine as
+   `RunOptions.node_policies`. Edits are keyed by node name, so all instances
+   share them. Never mutate `NodeFunction` attributes.
 5. **Offline UI.** No CDN links, no network assets, no build step.
 6. **Boring code.** Standard library first, minimal dependencies, no speculative
    abstractions.
@@ -60,7 +61,7 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 - Product-breakdown checks must pass after editing the tree:
   `pb check --strict` and `pb node-size --strict`.
 - Manual: `seq-ext-gui` with `--project-root ../sequence_extensions/examples/flow_runner`,
-  select `flows.py` + `campaign.toml`, press Evaluate, inspect the graph, press Execute.
+  select `flows.py` + `plan.json`, press Evaluate, inspect the graph, press Execute.
 
 ## Environment notes
 

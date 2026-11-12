@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from seq_ext_gui.files import MAX_WRITE_BYTES, ProjectFiles
+from seq_ext_gui.files import ProjectFiles
 
 
 @pytest.fixture
@@ -14,7 +14,8 @@ def root(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     project.mkdir()
     (project / "flow.py").write_text("x = 1\n", encoding="utf-8")
-    (project / "sample.toml").write_text("value = 1\n", encoding="utf-8")
+    (project / "plan.json").write_text('{"schema": "flow-plan/2"}\n', encoding="utf-8")
+    (project / "legacy.toml").write_text("value = 1\n", encoding="utf-8")
     return project
 
 
@@ -42,7 +43,7 @@ def test_tree_filters_and_sorts(files: ProjectFiles, root: Path) -> None:
         ("dir", "B_dir"),
         ("file", "A.py"),
         ("file", "flow.py"),
-        ("file", "sample.toml"),
+        ("file", "plan.json"),
         ("file", "z.py"),
     ]
     assert all(not entry.path.startswith("/") for entry in tree.entries)
@@ -55,7 +56,9 @@ def test_tree_rejects_traversal(files: ProjectFiles) -> None:
         files.tree("../sibling")
 
 
-def test_absolute_paths_confined_to_root(files: ProjectFiles, root: Path, tmp_path: Path) -> None:
+def test_absolute_paths_confined_to_root(
+    files: ProjectFiles, root: Path, tmp_path: Path
+) -> None:
     (tmp_path / "outside.txt").write_text("secret\n", encoding="utf-8")
     with pytest.raises(ValueError):
         files.read(tmp_path / "outside.txt")
@@ -77,32 +80,14 @@ def test_read_rejects_non_text_and_directories(files: ProjectFiles, root: Path) 
     with pytest.raises(ValueError):
         files.read("notes.txt")
     with pytest.raises(ValueError):
+        files.read("legacy.toml")
+    with pytest.raises(ValueError):
         files.read("missing.py")
     with pytest.raises(ValueError):
         files.read(".")
 
 
-def test_toml_round_trip(files: ProjectFiles, root: Path) -> None:
-    content = '[run]\nflow = "root"\n'
-    saved = files.write("new.toml", content)
-
-    assert saved.path == "new.toml"
-    assert saved.content == content
-    assert files.read("new.toml").content == content
-    assert (root / "new.toml").read_text(encoding="utf-8") == content
-
-    files.write("new.toml", "value = 2\n")
-    assert files.read("new.toml").content == "value = 2\n"
-    assert not list(root.glob(".new.toml.*.tmp"))
-
-
-def test_write_rules(files: ProjectFiles, root: Path) -> None:
-    with pytest.raises(ValueError):
-        files.write("flow.py", "x = 2\n")
-    with pytest.raises(ValueError):
-        files.write("../escape.toml", "x = 1\n")
-    with pytest.raises(ValueError):
-        files.write("missing/escape.toml", "x = 1\n")
-    with pytest.raises(ValueError):
-        files.write("big.toml", "x" * (MAX_WRITE_BYTES + 1))
-    assert not (root / "big.toml").exists()
+def test_json_plan_is_readable_and_writes_are_gone(files: ProjectFiles) -> None:
+    assert files.read("plan.json").content == '{"schema": "flow-plan/2"}\n'
+    assert files.read("plan.json").path == "plan.json"
+    assert not hasattr(files, "write")

@@ -12,7 +12,7 @@ status: current
 The GUI is a local single-user preview and run tool; scheduling, code editing, history, and multi-user service stay out.
 
 - **Local single user:** binds `127.0.0.1:8765` by default; no accounts, roles, or auth (`REQ-002`, `INFO-015`).
-- **Editable surface:** TOML is the editable code surface; `.py` files are read-only and save accepts only `.toml` (`INFO-013`).
+- **Editable surface:** the `flow-plan/2` JSON document is edited in memory and imported or exported; `.py` files are read-only and the GUI writes no project files (`INFO-013`).
 - **No node-code editing:** the author edits the `@node` module outside the GUI (`INFO-002`).
 - **No scheduling or HPC:** each run starts from the browser; batch, cron, and HPC submission stay with `flow-runner` (`INFO-004`).
 - **No run-history database:** each job writes its own directory under `.seq_ext_gui/jobs`; no cross-run query (`INFO-020`).

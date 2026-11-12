@@ -18,16 +18,36 @@ worker.py -> engine.py -> sequence_extensions API
 
 1. `app.py`, `jobs.py`, `files.py` never import `sequence_extensions` or a user
    flow module. Only `engine.py` does, and only inside the worker process.
-2. `engine.py` uses only `plan_document`, `apply_override`,
-   `parameters_from_document`, `execute_flow`, `RunOptions`, `NodePolicy`,
-   `jsonable`, `find_nodes`, `RunnerConfig`. No engine logic is copied.
+2. `engine.py` uses only `plan_document`, `apply_override`, `execute_plan`,
+   `RunOptions`, `NodePolicy`, `jsonable`, and `find_nodes`. No engine logic is
+   copied.
 3. Every evaluate/execute gets a fresh worker process and a fresh job directory.
 4. Values the flow binds explicitly are not overridable and are shown read-only.
 5. No CDN, no network assets, no build step in `static/`.
 
+## Wire contract
+
+The only run configuration is the engine's `flow-plan/2` JSON document;
+`contracts.py` mirrors it so the same shape crosses every process boundary.
+
+- `Param` — `name`, `type`, `required`, `default`, `value`, `editable`, `note`.
+- `PlanNode` — `id`, `name`, `kind`, `path`, `instance`, `policy`, `params`;
+  `PlanEdge` — `from`/`to`; `Policy` — retries, backoff, timeout.
+- `PlanOptions` — the six document options with concrete defaults:
+  `max_workers=16`, `summary=False`, `fixed_clock=False`, `retries=0`,
+  `retry_delay_seconds=0.0`, `timeout=None`.
+- `WirePlan` — `schema`, `parameters`, `nodes`, `edges`, `options`. There is
+  no `root`; flow selection is external. `to_document()` strips
+  `editable`/`note` and returns the pure engine document for export/execute.
+- `JobRequest` — `flow_file`, optional `flow_name`, optional `plan` (a raw
+  imported or edited `flow-plan/2` document). `WorkerRequest` adds `mode` and
+  `log_dir`; `WorkerResult` carries `flow_name`, `available_flows`, `plan`,
+  `run`, `warnings`, `error`, and timings.
+
 ## Worker protocol
 
-Invocation (cwd is arbitrary, the worker changes into the request `cwd`):
+Invocation (the worker changes into the flow file's directory; there is no
+separate `cwd`):
 
 ```
 python -m seq_ext_gui.worker <request.json> <result.json>
@@ -39,7 +59,8 @@ handled flow error (`ok=false`) and non-zero only for catastrophic failures.
 Nothing else is written to stdout/stderr except a short traceback on crash.
 
 `log_dir` is an absolute per-job directory chosen by `jobs.py`. `engine.execute`
-sets `RunOptions.log` to it; `jobs.py` tails the single `*.jsonl` file for SSE.
+passes it as `log=` to `execute_plan`; `jobs.py` tails the single `*.jsonl`
+file for SSE.
 
 ## engine.py
 
@@ -48,39 +69,36 @@ def plan(request: WorkerRequest) -> WorkerResult
 def execute(request: WorkerRequest) -> WorkerResult
 ```
 
-Both share one prepare path:
+`plan` builds the wire plan without executing user node bodies:
 
-1. `os.chdir(request.cwd or flow_file.parent)` so TOML-relative paths behave
-   like the CLI.
-2. Parse `config_text` (preferred) or `config_file` with `tomllib`, then
-   `RunnerConfig.from_dict(data)`; validation errors become `ok=false`.
-3. Import the flow file by absolute path (verified loader: package-aware branch,
-   `sys.modules` registration before `exec_module`, parent on `sys.path`).
-4. `find_nodes(module)`; select `request.flow_name or cfg.flow or` the only
-   node. Ambiguity returns `ok=false` with `available_flows` populated.
-5. Apply `request.overrides.policy` by mutating the `NodeFunction` attributes
-   (`retries`, `retry_delay_seconds`, `timeout`). This is upstream-unsupported;
-   add a warning string describing exactly what was mutated.
-6. Build `RunOptions` from `cfg.options`, then apply `overrides.options`
-   (`dataclasses.replace` with only the fields in `model_fields_set`), then merge
-   `overrides.node_defaults` into `node_defaults`. `execute` additionally forces
-   `log=Path(request.log_dir)`.
-7. Root arguments: start from `cfg.inputs`, filter to the target signature,
-   merge `overrides.root` after `decode_value(value, param_type)`. Root values
-   are always passed as kwargs, never through the registry, because explicit
-   kwargs win over the registry. A missing required root parameter is
-   `ok=false` with the parameter names.
-8. `plan_document(fn, options=..., **root_kwargs)` then encode to `WirePlan`.
+1. Import the flow file by absolute path (verified loader: package-aware branch,
+   `sys.modules` registration before `exec_module`, parent on `sys.path`); the
+   worker has already changed into the file's directory.
+2. `find_nodes(module)`; select `request.flow_name` or the only node. Ambiguity
+   returns `ok=false` with `available_flows` populated.
+3. If `request.plan` is present, require `schema == "flow-plan/2"`; decode its
+   root `parameters` with `decode_value`, then build `RunOptions` from its
+   `options`.
+4. A missing required root parameter is `ok=false` naming the parameters.
+5. `doc = plan_document(fn, options=run_options, **root_kwargs)`.
+6. If a seed plan was given, preserve its edits:
+   `apply_override(doc, {parameters, nodes[].params, nodes[].policy})`. Seed
+   `options` are not applied twice — they were already used to plan.
+7. Return a `WirePlan` with the editability heuristic below. `editable`/`note`
+   come from the freshly generated document (code values); the overlaid values
+   are displayed, so an edited parameter that was re-evaluated stays editable.
+8. No runner-config object and no separate `cwd`; the working directory is
+   always the flow file's parent.
 
-`execute` then:
+`execute`:
 
-9. Re-apply node edits to the raw document with `apply_override(doc, override)`
-   using `{"nodes": [{"name": n, "params": [{"name": p, "value": v}]}]}`;
-   registry = `parameters_from_document(edited)` with the root entry removed.
-10. `execute_flow(fn, options=run_options, **root_kwargs)`; on exception, use
-    `exc.run` when present and map it to `RunResult`; never swallow.
-11. Return `ok=true` with `run` and the post-edit plan. `run.result` is passed
-    through `jsonable`.
+9. Require `request.plan`; otherwise `EngineError("execute requires a plan")`.
+10. Import and select the flow, then
+    `execute_plan(fn, request.plan, log=request.log_dir)`. Do not re-plan: the
+    plan document is authoritative.
+11. Return `ok=true` with `run` and the executed plan as a `WirePlan`; on a flow
+    exception, use `exc.run` when present and map it to `RunResult`; never
+    swallow. `run.result` is passed through `jsonable`.
 
 ### Parameter editability rule (documented heuristic)
 
@@ -91,7 +109,7 @@ Both share one prepare path:
 - Node parameter whose value differs from its default: read-only with
   `note="possibly set by flow code"`.
 - `kind="gather"` nodes: no parameters.
-- Overrides are keyed by node *name*, not instance. When a name has multiple
+- Edits are keyed by node *name*, not instance. When a name has multiple
   instances with differing parameter values, keep them editable but add a
   warning: the edit applies to every instance.
 
@@ -100,19 +118,19 @@ Both share one prepare path:
 | Method | Path | Body / result |
 |---|---|---|
 | GET | `/api/health` | `HealthResponse` |
-| GET | `/api/tree?path=` | `TreeResponse`; dirs plus `*.py`/`*.toml` files, hidden and `__pycache__`/`.git`/`.venv`/`runs` skipped |
-| GET | `/api/file?path=` | `FileContent`; read `.py`/`.toml` under the project root |
-| PUT | `/api/file?path=` | `SaveFileRequest`; only `.toml`, UTF-8, path confined to root |
+| GET | `/api/tree?path=` | `TreeResponse`; dirs plus `*.py`/`*.json` files, hidden and `__pycache__`/`.git`/`.venv`/`runs` skipped |
+| GET | `/api/file?path=` | `FileContent`; read `.py`/`.json` under the project root |
 | POST | `/api/evaluate` | `JobRequest` -> `WorkerResult` (synchronous, spawned worker) |
 | POST | `/api/execute` | `JobRequest` -> `{"job_id": str}` |
 | GET | `/api/jobs/{id}` | `JobStatus` |
 | GET | `/api/jobs/{id}/events` | SSE: `status` | `log` | `done` events |
 | POST | `/api/jobs/{id}/cancel` | `JobStatus`; kills the process group |
 
-All `path`/`flow_file`/`config_file`/`cwd` values are resolved against the
-configured project root; anything outside it is rejected with HTTP 400.
-`project_root` comes from `seq-ext-gui --project-root`, else
-`SEQ_EXT_GUI_PROJECT_ROOT`, else the current directory.
+There is no project-file write endpoint: the GUI does not save project files. All
+`path`/`flow_file` values are resolved against the configured project root;
+anything outside it is rejected with HTTP 400. `project_root` comes from
+`seq-ext-gui --project-root`, else `SEQ_EXT_GUI_PROJECT_ROOT`, else the current
+directory.
 
 SSE event shapes:
 
@@ -133,14 +151,27 @@ The stream closes after `done`. Late subscribers get the current status first.
 
 Two vertical panels, per the product request:
 
-- Left: project file browser, flow `.py` selector, TOML config selector, TOML
-  editor (plain textarea, monospace), run-option fields, **Evaluate** button.
+- Left: project file browser (`.py`/`.json`), flow-file display and flow-name
+  dropdown, plan panel with **Import plan**/**Export plan**, plan option fields,
+  **Evaluate** button.
 - Right: SVG DAG (oriented top-to-bottom, layered by longest path), node click
-  selects it and opens the parameter editor in a side column, **Execute**
-  button, live run log, result banner.
+  selects it and opens the parameter and policy editor in a side column,
+  **Execute** button, live run log, result banner.
+
+Clicking a `.json` file in the browser imports it; clicking a `.py` file selects
+the workflow. Import requires `schema === "flow-plan/2"` and runs Evaluate so
+the engine validates and refreshes the document against the selected workflow;
+with no flow selected the UI shows a clear message. Export downloads
+`planDocument(state.plan)` as `plan.json`.
+
+Root inputs and node parameters mutate `state.plan.parameters[]` and
+`state.plan.nodes[].params[]` directly; the policy editor mutates
+`state.plan.nodes[].policy` (all instances by name); option fields mutate
+`state.plan.options`. Any edit marks the plan dirty and re-enables Evaluate.
+`buildPayload()` returns `{flow_file, flow_name, plan}`; Evaluate sends the
+current plan (if any) as the seed, Execute sends it and requires one.
 
 Editable parameter widgets derive from `Param.type`: `bool` checkbox, `int`/
 `float` number input, `Path`/`str` text input, `list`/`dict` JSON textarea.
-Read-only params render disabled with their `note` as a tooltip.
-Evaluate is required before Execute; changing a parameter marks the plan dirty
-and re-enables Evaluate.
+Read-only params render disabled with their `note` as a tooltip. The displayed
+root-node label is the selected or evaluated flow name, not a plan field.

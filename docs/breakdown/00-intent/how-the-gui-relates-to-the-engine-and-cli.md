@@ -9,11 +9,11 @@ status: current
 
 # How the GUI relates to the engine and CLI
 
-The GUI shares the engine API with the CLI; the CLI stays the batch path, GUI adds preview and overrides.
+The GUI shares the engine API with the CLI; the CLI stays the batch path, GUI adds preview and plan editing.
 
-- **Same API:** the GUI calls `plan_document`, `apply_override`, `parameters_from_document`, `execute_flow`, `RunOptions`, and `NodePolicy`; it copies no engine logic (`INFO-007`).
-- **Shared inputs:** both paths read one flow module and one TOML config.
-- **CLI role:** `flow-runner config.toml` runs a prepared config as the batch path, with no preview or edit step.
-- **GUI adds:** graph preview, per-run overrides, and a run log that streams while the run runs (`REQ-004`).
+- **Same API:** the GUI calls `plan_document`, `apply_override`, `execute_plan`, `RunOptions`, `NodePolicy`, `jsonable`, and `find_nodes`; it copies no engine logic (`INFO-007`).
+- **Shared inputs:** both paths read one flow module and one `flow-plan/2` JSON plan.
+- **CLI role:** `flow-runner PLAN.json --module MODULE [--flow NAME]` runs a prepared plan as the batch path, with no preview or edit step.
+- **GUI adds:** graph preview, plan import/export, per-run plan edits, and a run log that streams while the run runs (`REQ-004`).
 - **Isolation:** every GUI evaluate or execute runs in a fresh subprocess; the web process never imports flow code (`INFO-006`).
 - **Limitation:** a value the flow binds explicitly stays read-only; the GUI cannot override code (`INFO-007`, `REQ-001`).

@@ -249,24 +249,10 @@ input:disabled, select:disabled, textarea:disabled {
   white-space: nowrap;
 }
 
-.config-section { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-
-.toml-editor {
-  flex: 1;
-  min-height: 150px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.5;
-  tab-size: 2;
-  white-space: pre;
-  overflow: auto;
-}
-
-.row-actions {
+.plan-actions {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 6px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .opts-grid {

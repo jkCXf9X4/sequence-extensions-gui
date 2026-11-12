@@ -17,7 +17,6 @@ from .contracts import (
     HealthResponse,
     JobRequest,
     JobStatus,
-    SaveFileRequest,
     TreeResponse,
     WorkerResult,
 )
@@ -42,14 +41,9 @@ def _format_sse(event: str, data: dict[str, Any], event_id: int | None = None) -
 
 
 def _confined_job(files: ProjectFiles, payload: JobRequest) -> JobRequest:
-    # model_copy keeps ``model_fields_set``, which the engine relies on to tell
-    # an absent RunOptions field from one explicitly set to None.
-    update: dict[str, Any] = {"flow_file": str(files.resolve(payload.flow_file))}
-    if payload.config_file:
-        update["config_file"] = str(files.resolve(payload.config_file))
-    if payload.cwd:
-        update["cwd"] = str(files.resolve(payload.cwd))
-    return payload.model_copy(update=update)
+    # model_copy keeps ``model_fields_set`` so the worker can tell an absent
+    # optional field from one explicitly set to None.
+    return payload.model_copy(update={"flow_file": str(files.resolve(payload.flow_file))})
 
 
 def _parse_last_event_id(request: Request) -> int:
@@ -93,10 +87,6 @@ def create_app(
     @app.get("/api/file", response_model=FileContent)
     def read_file(path: str) -> FileContent:
         return files.read(path)
-
-    @app.put("/api/file", response_model=FileContent)
-    def save_file(payload: SaveFileRequest, path: str) -> FileContent:
-        return files.write(path, payload.content)
 
     @app.post("/api/evaluate", response_model=WorkerResult)
     async def evaluate(payload: JobRequest) -> WorkerResult:

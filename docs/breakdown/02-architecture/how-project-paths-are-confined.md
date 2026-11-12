@@ -13,7 +13,7 @@ Every accepted path is resolved and then checked to sit inside the configured pr
 
 - **Root:** `--project-root`, else `SEQ_EXT_GUI_PROJECT_ROOT`, else the current directory.
 - **Confinement:** the resolved path must equal the root or sit under it; traversal and symlink escapes fail.
-- **Tree:** directories plus `.py`/`.toml` files; hidden entries and `__pycache__`, `.git`, `.venv`, `runs`, `.seq_ext_gui` are skipped.
-- **Read:** only UTF-8 `.py` and `.toml` files.
-- **Write:** only `.toml`, at most 1 MiB, through a temp file and `os.replace`.
+- **Tree:** directories plus `.py`/`.json` files; hidden entries and `__pycache__`, `.git`, `.venv`, `runs`, `.seq_ext_gui` are skipped.
+- **Read:** only UTF-8 `.py` and `.json` files.
+- **Write:** none; the API exposes no project-file write endpoint, and the browser imports/exports plans instead.
 - **Errors:** a confinement failure becomes HTTP 400 (`INFO-013`).

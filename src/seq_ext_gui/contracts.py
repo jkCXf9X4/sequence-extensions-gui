@@ -1,17 +1,21 @@
 """Wire models shared by the HTTP API and the worker subprocess.
 
-Everything that crosses a process boundary is defined here exactly once.
+Everything that crosses a process boundary is defined here exactly once.  The
+configuration artifact is the engine's ``flow-plan/2`` JSON document: the GUI
+imports and exports it, and the worker consumes it verbatim.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import stat
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PLAN_SCHEMA = "flow-plan/1"
+PLAN_SCHEMA = "flow-plan/2"
 
 
 class Policy(BaseModel):
@@ -22,28 +26,15 @@ class Policy(BaseModel):
     timeout: float | None = None
 
 
-class PolicyEdit(BaseModel):
-    """Policy delta; unset fields are left alone."""
+class PlanOptions(BaseModel):
+    """The six run options a ``flow-plan/2`` document carries."""
 
-    retries: int | None = None
-    retry_delay_seconds: float | None = None
+    max_workers: int = 16
+    summary: bool = False
+    fixed_clock: bool = False
+    retries: int = 0
+    retry_delay_seconds: float = 0.0
     timeout: float | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class OptionsEdit(BaseModel):
-    """``RunOptions`` delta; unset fields are left alone."""
-
-    max_workers: int | None = None
-    log: str | None = None
-    summary: bool | None = None
-    fixed_clock: bool | None = None
-    retries: int | None = None
-    retry_delay_seconds: float | None = None
-    timeout: float | None = None
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class Param(BaseModel):
@@ -52,7 +43,6 @@ class Param(BaseModel):
     required: bool = False
     default: Any = None
     value: Any = None
-    display: str = ""
     editable: bool = True
     note: str | None = None
 
@@ -75,32 +65,48 @@ class PlanEdge(BaseModel):
 
 
 class WirePlan(BaseModel):
+    """Plan document plus the GUI editability annotations.
+
+    ``to_document`` strips the annotations and returns the engine document the
+    GUI imports, exports, and executes.  The root node is deliberately not part
+    of the plan: flow selection lives in the GUI dropdown.
+    """
+
     schema_name: str = Field(default=PLAN_SCHEMA, alias="schema")
-    root: str
     parameters: list[Param] = Field(default_factory=list)
     nodes: list[PlanNode] = Field(default_factory=list)
     edges: list[PlanEdge] = Field(default_factory=list)
+    options: PlanOptions = Field(default_factory=PlanOptions)
 
     model_config = ConfigDict(populate_by_name=True)
 
-
-class Overrides(BaseModel):
-    """User edits applied on top of the planned flow."""
-
-    root: dict[str, Any] = Field(default_factory=dict)
-    nodes: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    policy: dict[str, PolicyEdit] = Field(default_factory=dict)
-    node_defaults: PolicyEdit | None = None
-    options: OptionsEdit | None = None
+    def to_document(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema_name,
+            "parameters": [_param_document(param) for param in self.parameters],
+            "nodes": [
+                {
+                    "id": node.id,
+                    "name": node.name,
+                    "kind": node.kind,
+                    "path": list(node.path),
+                    "instance": node.instance,
+                    "policy": node.policy.model_dump(),
+                    "params": [_param_document(param) for param in node.params],
+                }
+                for node in self.nodes
+            ],
+            "edges": [{"from": edge.source, "to": edge.target} for edge in self.edges],
+            "options": self.options.model_dump(),
+        }
 
 
 class JobRequest(BaseModel):
     flow_file: str
-    config_file: str | None = None
-    config_text: str | None = None
     flow_name: str | None = None
-    cwd: str | None = None
-    overrides: Overrides = Field(default_factory=Overrides)
+    plan: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class WorkerRequest(JobRequest):
@@ -129,7 +135,6 @@ class WorkerResult(BaseModel):
     flow_name: str | None = None
     available_flows: list[str] = Field(default_factory=list)
     plan: WirePlan | None = None
-    config: dict[str, Any] = Field(default_factory=dict)
     run: RunResult | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -169,35 +174,71 @@ class FileContent(BaseModel):
     content: str
 
 
-class SaveFileRequest(BaseModel):
-    content: str
-
-
 class HealthResponse(BaseModel):
     ok: bool = True
     version: str
     project_root: str
 
 
-def encode_value(value: Any) -> tuple[Any, str, bool, str | None]:
-    """Return ``(json_value, display, editable, note)`` for a raw Python value."""
+def _param_document(param: Param) -> dict[str, Any]:
+    return {
+        "name": param.name,
+        "type": param.type,
+        "required": param.required,
+        "default": param.default,
+        "value": param.value,
+    }
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Hex sha256 of a readable regular file, else ``None``.
+
+    Mirrors the engine's ``jsonable`` Path payload so an exported plan can be
+    decoded by ``execute_plan`` again.
+    """
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return None
+    if not stat.S_ISREG(mode):
+        return None
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def encode_value(value: Any) -> tuple[Any, bool, str | None]:
+    """Return ``(json_value, editable, note)`` for a raw Python value.
+
+    ``Path`` follows the engine's JSON-safe ``jsonable`` form (``{"path": ...,
+    "sha256": ...}``) so an exported plan can be decoded by ``execute_plan``.
+    """
     if isinstance(value, Path):
-        text = str(value)
-        return text, text, True, None
+        return {"path": str(value), "sha256": _file_sha256(value)}, True, None
     if value is None or isinstance(value, bool | int | float | str):
-        return value, repr(value), True, None
+        return value, True, None
     if isinstance(value, list | tuple | dict):
         try:
-            return json.loads(json.dumps(value)), repr(value), True, None
+            return json.loads(json.dumps(value)), True, None
         except (TypeError, ValueError):
-            return None, repr(value), False, f"unsupported value type: {type(value).__name__}"
-    return None, repr(value), False, f"unsupported value type: {type(value).__name__}"
+            return None, False, f"unsupported value type: {type(value).__name__}"
+    return None, False, f"unsupported value type: {type(value).__name__}"
 
 
 def decode_value(value: Any, type_hint: str) -> Any:
     """Coerce a JSON value back to the Python type named by ``type_hint``."""
     hint = (type_hint or "").strip()
     if hint.endswith("Path") and value is not None:
+        if isinstance(value, dict):
+            raw = value.get("path")
+            if raw is None:
+                raise ValueError(f"cannot read {value!r} as Path")
+            value = raw
         return Path(str(value)).expanduser()
     if hint in {"int", "float", "str", "bool"} and isinstance(value, str):
         text = value.strip()
