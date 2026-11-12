@@ -42,13 +42,14 @@ def _format_sse(event: str, data: dict[str, Any], event_id: int | None = None) -
 
 
 def _confined_job(files: ProjectFiles, payload: JobRequest) -> JobRequest:
-    data = payload.model_dump()
-    data["flow_file"] = str(files.resolve(payload.flow_file))
+    # model_copy keeps ``model_fields_set``, which the engine relies on to tell
+    # an absent RunOptions field from one explicitly set to None.
+    update: dict[str, Any] = {"flow_file": str(files.resolve(payload.flow_file))}
     if payload.config_file:
-        data["config_file"] = str(files.resolve(payload.config_file))
+        update["config_file"] = str(files.resolve(payload.config_file))
     if payload.cwd:
-        data["cwd"] = str(files.resolve(payload.cwd))
-    return JobRequest.model_validate(data)
+        update["cwd"] = str(files.resolve(payload.cwd))
+    return payload.model_copy(update=update)
 
 
 def _parse_last_event_id(request: Request) -> int:

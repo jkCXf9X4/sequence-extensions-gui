@@ -1,2 +1,0 @@
-[console_scripts]
-seq-ext-gui = seq_ext_gui.cli:main

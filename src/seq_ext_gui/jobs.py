@@ -82,7 +82,7 @@ class JobManager:
     ) -> WorkerResult:
         """Run one plan-mode worker to completion and return its result."""
         job = self._create(f"eval-{uuid.uuid4().hex}", request)
-        worker_request = WorkerRequest(mode="plan", **request.model_dump())
+        worker_request = WorkerRequest(mode="plan", **request.model_dump(exclude_unset=True))
         self._write_request(job, worker_request)
         limit = self.evaluate_timeout if timeout is None else float(timeout)
 
@@ -147,7 +147,7 @@ class JobManager:
         worker_request = WorkerRequest(
             mode="execute",
             log_dir=str(job.log_dir),
-            **request.model_dump(),
+            **request.model_dump(exclude_unset=True),
         )
         self._write_request(job, worker_request)
         self._jobs[job.id] = job
@@ -243,7 +243,9 @@ class JobManager:
 
     @staticmethod
     def _write_request(job: _Job, request: WorkerRequest) -> None:
-        job.request_path.write_text(request.model_dump_json(indent=2), encoding="utf-8")
+        job.request_path.write_text(
+            request.model_dump_json(indent=2, exclude_unset=True), encoding="utf-8"
+        )
 
     @staticmethod
     def _status(job: _Job) -> JobStatus:

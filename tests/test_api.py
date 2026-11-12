@@ -241,3 +241,22 @@ def test_evaluate_sample_project_with_real_worker(sample_project) -> None:
     assert body["ok"] is True, body
     assert body["plan"] is not None
     assert body["plan"]["root"]
+
+
+@pytest.mark.integration
+def test_evaluate_keeps_run_option_fields_set(sample_project) -> None:
+    """An Overrides round-trip must not turn absent RunOptions fields into None."""
+    with TestClient(create_app(sample_project.root)) as test_client:
+        response = test_client.post(
+            "/api/evaluate",
+            json={
+                "flow_file": "flow.py",
+                "config_file": "sample.toml",
+                "overrides": {"options": {"max_workers": 3, "summary": True}},
+            },
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True, body
+    assert "root" in body["available_flows"]
+    assert body["plan"]["schema"] == "flow-plan/1"

@@ -82,7 +82,11 @@ async function api(path, init = {}) {
   if (!response.ok) {
     const detail =
       typeof data === "string" ? data : data?.detail != null ? JSON.stringify(data.detail) : text;
-    throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`);
+    const error = new Error(
+      `${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`,
+    );
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -270,12 +274,17 @@ function markDirty() {
 }
 
 function buildPayload() {
+  reconcileOverrides();
+  // The config's directory drives TOML-relative paths; "." means the project root.
+  const cwd = state.configFile
+    ? (flowDir(state.configFile) ?? ".")
+    : flowDir(state.flowFile);
   return {
     flow_file: state.flowFile,
     config_file: state.configFile || null,
-    config_text: state.configText ? state.configText : null,
+    config_text: state.configFile ? state.configText : null,
     flow_name: state.flowName || null,
-    cwd: flowDir(state.configFile) || flowDir(state.flowFile),
+    cwd,
     overrides: JSON.parse(JSON.stringify(state.overrides)),
   };
 }
@@ -323,6 +332,7 @@ function handleEvaluateResult(result) {
   state.plan = result.plan;
   state.selectedId = null;
   state.dirty = false;
+  reconcileOverrides();
   ui.dirtyHint.classList.add("hidden");
   if (result.flow_name) {
     state.flowName = result.flow_name;
@@ -384,9 +394,64 @@ function currentOverride(origin, owner, name) {
   return state.overrides.nodes[owner]?.[name];
 }
 
+function deleteOverride(origin, owner, name) {
+  if (origin === "root") {
+    delete state.overrides.root[name];
+    return;
+  }
+  const bag = state.overrides.nodes[owner];
+  if (!bag) return;
+  delete bag[name];
+  if (!Object.keys(bag).length) delete state.overrides.nodes[owner];
+}
+
+// Drop overrides the current plan would not accept: read-only params and nodes
+// that no longer exist must never be sent back to the engine.
+function reconcileOverrides() {
+  const plan = state.plan;
+  if (!plan) return;
+  const rootParams = Array.isArray(plan.parameters) ? plan.parameters : [];
+  const editableRoot = new Set(
+    rootParams.filter((param) => param && param.editable !== false).map((param) => param.name),
+  );
+  for (const name of Object.keys(state.overrides.root)) {
+    if (!editableRoot.has(name)) delete state.overrides.root[name];
+  }
+
+  const editableByNode = new Map();
+  for (const node of Array.isArray(plan.nodes) ? plan.nodes : []) {
+    if (!node || typeof node.name !== "string") continue;
+    let names = editableByNode.get(node.name);
+    if (!names) {
+      names = new Set();
+      editableByNode.set(node.name, names);
+    }
+    for (const param of Array.isArray(node.params) ? node.params : []) {
+      if (param && param.editable !== false) names.add(param.name);
+    }
+  }
+
+  for (const owner of Object.keys(state.overrides.nodes)) {
+    const bag = state.overrides.nodes[owner];
+    const allowed = editableByNode.get(owner);
+    if (!bag || !allowed) {
+      delete state.overrides.nodes[owner];
+      continue;
+    }
+    for (const name of Object.keys(bag)) {
+      if (!allowed.has(name)) delete bag[name];
+    }
+    if (!Object.keys(bag).length) delete state.overrides.nodes[owner];
+  }
+
+  for (const owner of Object.keys(state.overrides.policy)) {
+    if (!editableByNode.has(owner)) delete state.overrides.policy[owner];
+  }
+}
+
 function setOverride(origin, owner, name, value, original) {
-  const existed = hasOverride(origin, owner, name);
-  if (!existed && sameValue(value, original)) {
+  if (sameValue(value, original)) {
+    if (hasOverride(origin, owner, name)) deleteOverride(origin, owner, name);
     markDirty();
     return;
   }
@@ -472,7 +537,7 @@ function buildParam(param, origin, owner) {
         setError("enter a number");
         return;
       }
-      const number = kind === "int" ? Number.parseInt(text, 10) : Number(text);
+      const number = Number(text);
       if (!Number.isFinite(number) || (kind === "int" && !Number.isInteger(number))) {
         setError(kind === "int" ? "not an integer" : "not a number");
         return;
@@ -579,7 +644,7 @@ function renderNodeEditor() {
 
 function parsePolicyField(text, kind) {
   if (text.trim() === "") return { empty: true };
-  const number = kind === "int" ? Number.parseInt(text, 10) : Number(text);
+  const number = Number(text);
   if (!Number.isFinite(number) || (kind === "int" && !Number.isInteger(number))) {
     return { error: kind === "int" ? "not an integer" : "not a number" };
   }
@@ -762,7 +827,7 @@ function parseEvent(event) {
 
 function finishRun(data) {
   setJobStatus(data?.state || "done");
-  showResult(data?.result, data?.state);
+  showResult(data?.result, data?.state, data?.error);
   if (data?.result && Array.isArray(data.result.warnings)) {
     renderWarnings(data.result.warnings);
   }
@@ -804,13 +869,17 @@ function appendLog(record) {
   if (nearBottom) ui.log.scrollTop = ui.log.scrollHeight;
 }
 
-function showResult(result, finalState) {
+function showResult(result, finalState, topError) {
   const banner = ui.resultBanner;
   banner.replaceChildren();
   banner.classList.remove("hidden", "bad");
 
   const run = result?.run || null;
-  const failed = finalState !== "succeeded" || result?.ok === false;
+  const failed =
+    finalState !== "succeeded" ||
+    result?.ok === false ||
+    Boolean(topError) ||
+    Boolean(result?.error);
   if (failed) banner.classList.add("bad");
 
   const parts = [
@@ -818,7 +887,7 @@ function showResult(result, finalState) {
     ["duration", run?.duration_ms != null ? `${run.duration_ms} ms` : result?.duration_ms != null ? `${result.duration_ms} ms` : null],
     ["node", run?.node || null],
     ["attempt", run?.attempt != null ? String(run.attempt) : null],
-    ["error", run?.error ?? result?.error ?? null],
+    ["error", run?.error ?? result?.error ?? topError ?? null],
     [
       "failed nodes",
       Array.isArray(run?.failed_nodes) && run.failed_nodes.length
@@ -857,8 +926,20 @@ async function cancelRun() {
     });
     setJobStatus(status?.state || "cancelling…");
   } catch (error) {
-    setJobStatus("cancel failed");
-    showEvalError(`Cancel failed: ${error.message}`);
+    if (error.status === 404) {
+      // The job is gone (server restarted or the record was already dropped).
+      if (state.source) {
+        state.source.close();
+        state.source = null;
+      }
+      state.jobId = null;
+      ui.cancel.classList.add("hidden");
+      setJobStatus("job already finished");
+      ui.execute.disabled = !state.plan;
+    } else {
+      setJobStatus("cancel failed");
+      showEvalError(`Cancel failed: ${error.message}`);
+    }
   } finally {
     ui.cancel.disabled = false;
   }
@@ -871,8 +952,9 @@ function readOptions() {
   const number = (input, integer) => {
     const text = input.value.trim();
     if (text === "") return null;
-    const value = integer ? Number.parseInt(text, 10) : Number(text);
-    return Number.isFinite(value) ? value : null;
+    const value = Number(text);
+    if (!Number.isFinite(value) || (integer && !Number.isInteger(value))) return null;
+    return value;
   };
   const maxWorkers = number(ui.optMaxWorkers, true);
   const retries = number(ui.optRetries, true);
@@ -895,7 +977,11 @@ ui.fileList.addEventListener("click", (event) => {
   if (!button) return;
   const path = button.dataset.path;
   if (button.dataset.kind === "dir") loadTree(path);
-  else selectFile(path);
+  else {
+    selectFile(path).catch((error) =>
+      showEvalError(`Cannot open ${path}: ${error.message}`),
+    );
+  }
 });
 
 ui.crumbs.addEventListener("click", (event) => {
@@ -965,4 +1051,7 @@ for (const input of [
   input.addEventListener("change", readOptions);
 }
 
-boot();
+boot().catch((error) => {
+  ui.health.textContent = `startup failed: ${error.message}`;
+  ui.health.classList.add("bad");
+});

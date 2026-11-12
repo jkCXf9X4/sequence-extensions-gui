@@ -52,29 +52,16 @@ function clip(value, limit) {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-export function renderGraph(svg, plan, options = {}) {
-  const previous = stateBySvg.get(svg);
-  if (previous?.dispose) previous.dispose();
-  clear(svg);
-  svg.classList.remove("panning");
-
+export function computeLayout(plan) {
   const nodes = Array.isArray(plan?.nodes) ? plan.nodes : [];
   const edges = Array.isArray(plan?.edges) ? plan.edges : [];
-  const state = { transform: null, width: 0, height: 0, dispose: null, justDragged: false, fit: null };
-  stateBySvg.set(svg, state);
-
-  if (nodes.length === 0) {
-    const note = el("text", { class: "graph-note", x: 28, y: 46 });
-    note.textContent = options.emptyText || "No nodes — this flow has a plain root.";
-    svg.append(note);
-    return;
-  }
 
   const byId = new Map();
   for (const node of nodes) byId.set(String(node.id), node);
 
   const deps = new Map();
   for (const node of nodes) deps.set(String(node.id), []);
+  const links = [];
   for (const edge of edges) {
     const { from, to } = edgeEnds(edge);
     if (from === undefined || to === undefined) continue;
@@ -82,6 +69,7 @@ export function renderGraph(svg, plan, options = {}) {
     const target = String(to);
     if (!byId.has(source) || !byId.has(target)) continue;
     deps.get(source).push(target);
+    links.push({ source, target });
   }
 
   const memo = new Map();
@@ -115,11 +103,9 @@ export function renderGraph(svg, plan, options = {}) {
     row.sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
   }
 
-  const widest = Math.max(...[...rows.values()].map((row) => row.length));
-  const width = widest * NODE_W + (widest - 1) * COL_GAP;
-  const height = (maxRank + 1) * NODE_H + maxRank * ROW_GAP;
-  state.width = width;
-  state.height = height;
+  const widest = rows.size ? Math.max(...[...rows.values()].map((row) => row.length)) : 0;
+  const width = widest * NODE_W + Math.max(0, widest - 1) * COL_GAP;
+  const height = nodes.length ? (maxRank + 1) * NODE_H + maxRank * ROW_GAP : 0;
 
   const positions = new Map();
   for (const [layer, row] of rows) {
@@ -129,6 +115,26 @@ export function renderGraph(svg, plan, options = {}) {
     row.forEach((node, index) => {
       positions.set(String(node.id), { x: startX + index * (NODE_W + COL_GAP), y });
     });
+  }
+
+  return { nodes, links, positions, width, height };
+}
+
+export function renderGraph(svg, plan, options = {}) {
+  const previous = stateBySvg.get(svg);
+  if (previous?.dispose) previous.dispose();
+  clear(svg);
+  svg.classList.remove("panning");
+
+  const { nodes, links, positions, width, height } = computeLayout(plan);
+  const state = { transform: null, width, height, dispose: null, fit: null };
+  stateBySvg.set(svg, state);
+
+  if (nodes.length === 0) {
+    const note = el("text", { class: "graph-note", x: 28, y: 46 });
+    note.textContent = options.emptyText || "No nodes — this flow has a plain root.";
+    svg.append(note);
+    return;
   }
 
   markerSeq += 1;
@@ -158,11 +164,9 @@ export function renderGraph(svg, plan, options = {}) {
     );
   }
 
-  for (const edge of edges) {
-    const { from, to } = edgeEnds(edge);
-    if (from === undefined || to === undefined) continue;
-    const source = positions.get(String(from));
-    const target = positions.get(String(to));
+  for (const { source: from, target: to } of links) {
+    const source = positions.get(from);
+    const target = positions.get(to);
     if (!source || !target) continue;
     const x1 = source.x + NODE_W / 2;
     const y1 = source.y + NODE_H;
@@ -228,11 +232,6 @@ export function renderGraph(svg, plan, options = {}) {
     title.textContent = `${name} (#${instance}, ${kind})\n${fullParams}`;
     group.append(title);
 
-    group.addEventListener("click", (event) => {
-      if (state.justDragged) return;
-      event.stopPropagation();
-      if (typeof options.onSelect === "function") options.onSelect(node.id);
-    });
     group.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
@@ -262,6 +261,7 @@ export function renderGraph(svg, plan, options = {}) {
   let drag = null;
   const onPointerDown = (event) => {
     if (event.button !== 0) return;
+    const pressNode = event.target?.closest?.(".graph-node") ?? null;
     drag = {
       pointerId: event.pointerId,
       x: event.clientX,
@@ -269,7 +269,9 @@ export function renderGraph(svg, plan, options = {}) {
       startX: transform.x,
       startY: transform.y,
       moved: false,
+      pressNode,
     };
+    svg.classList.add("panning");
     try {
       svg.setPointerCapture(event.pointerId);
     } catch {
@@ -287,17 +289,20 @@ export function renderGraph(svg, plan, options = {}) {
   };
   const onPointerUp = (event) => {
     if (!drag) return;
+    const { moved, pressNode } = drag;
     try {
       svg.releasePointerCapture(drag.pointerId);
     } catch {
       /* pointer capture is best-effort */
     }
-    state.justDragged = drag.moved;
-    window.setTimeout(() => {
-      state.justDragged = false;
-    }, 0);
     drag = null;
     svg.classList.remove("panning");
+    // Select on pointerup rather than click: pointer capture can retarget click,
+    // and this keeps a real pan from selecting the node it started on.
+    if (!moved && pressNode && typeof options.onSelect === "function") {
+      const nodeId = pressNode.getAttribute("data-node-id");
+      if (nodeId !== null) options.onSelect(nodeId);
+    }
   };
   const onPointerCancel = () => {
     drag = null;

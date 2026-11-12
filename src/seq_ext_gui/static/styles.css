@@ -293,7 +293,7 @@ input:disabled, select:disabled, textarea:disabled {
   word-break: break-word;
 }
 
-.error.details summary { cursor: pointer; color: var(--text-dim); }
+.error .details summary { cursor: pointer; color: var(--text-dim); }
 
 .warnings {
   margin: 8px 0 0;
@@ -355,6 +355,8 @@ input:disabled, select:disabled, textarea:disabled {
   height: 100%;
   cursor: grab;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #graph.panning { cursor: grabbing; }
