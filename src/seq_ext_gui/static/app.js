@@ -1,7 +1,13 @@
 // Browser UI for the sequence_extensions flow engine. Vanilla ES module.
 // All engine-provided text is inserted with textContent; there is no innerHTML.
 
-import { fitGraph, ROOT_NODE_ID, renderGraph, selectGraphNode } from "./graph.js";
+import {
+  fitGraph,
+  ROOT_NODE_ID,
+  renderGraph,
+  selectGraphNode,
+  setGraphNodeStates,
+} from "./graph.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -67,6 +73,7 @@ const state = {
   dirty: false,
   jobId: null,
   source: null,
+  run: null,
 };
 
 let widgetSeq = 0;
@@ -980,6 +987,160 @@ function renderWarnings(warnings) {
   ui.warnings.classList.remove("hidden");
 }
 
+// ----------------------------------------------------------------- run view ----
+
+function pathKey(path) {
+  return JSON.stringify(Array.isArray(path) ? path : []);
+}
+
+function startRunGraph() {
+  const plan = state.plan;
+  const nodes = Array.isArray(plan?.nodes) ? plan.nodes : [];
+  const nodesByPath = new Map();
+  for (const node of nodes) {
+    const key = pathKey(node.path);
+    if (!nodesByPath.has(key)) nodesByPath.set(key, []);
+    nodesByPath.get(key).push(node);
+  }
+  for (const list of nodesByPath.values()) {
+    list.sort((a, b) => Number(a.id) - Number(b.id));
+  }
+
+  const deps = new Map();
+  for (const node of nodes) deps.set(String(node.id), []);
+  for (const edge of Array.isArray(plan?.edges) ? plan.edges : []) {
+    const from = edge.from ?? edge.source;
+    const to = edge.to ?? edge.target;
+    if (from === undefined || to === undefined) continue;
+    const id = String(from);
+    if (!deps.has(id) || !deps.has(String(to))) continue;
+    deps.get(id).push(String(to));
+  }
+
+  state.run = {
+    nodesById: new Map(nodes.map((node) => [String(node.id), node])),
+    nodesByPath,
+    deps,
+    outcomes: new Map(),
+    retrying: new Set(),
+    assigned: new Set(),
+  };
+  refreshRunGraph();
+}
+
+// Match a run-log record to a plan occurrence. Records carry the call path but
+// not the instance; bound argument values are compared with the plan's
+// parameter values, then instances of one path consume plan ids in order.
+function recordValues(record) {
+  const values = Array.isArray(record.args) ? [...record.args] : [];
+  if (record.kwargs && typeof record.kwargs === "object") {
+    values.push(...Object.values(record.kwargs));
+  }
+  return values;
+}
+
+function bindingScore(node, values) {
+  const planValues = (Array.isArray(node.params) ? node.params : [])
+    .map((param) => param.value)
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => JSON.stringify(value));
+  let score = 0;
+  for (const value of values) {
+    if (planValues.includes(JSON.stringify(value))) score += 1;
+  }
+  return score;
+}
+
+function bestScored(pool, values) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const node of pool) {
+    const score = bindingScore(node, values);
+    if (score > bestScore) {
+      best = node;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function matchRunNode(run, record) {
+  const key = pathKey(record.path);
+  const candidates = run.nodesByPath.get(key) || [];
+  const named = candidates.filter((node) => !record.node || node.name === record.node);
+  const pool = named.length ? named : candidates;
+  if (pool.length === 0) return null;
+
+  const values = recordValues(record);
+  let chosen = null;
+  if (Number(record.attempt ?? 0) > 1) {
+    const retrying = pool.filter((node) => run.retrying.has(String(node.id)));
+    chosen = bestScored(retrying.length ? retrying : pool, values);
+  } else {
+    const fresh = pool.filter((node) => {
+      const id = String(node.id);
+      return !run.outcomes.has(id) && !run.assigned.has(id);
+    });
+    chosen = bestScored(fresh, values);
+  }
+  if (!chosen) return null;
+
+  const id = String(chosen.id);
+  run.assigned.add(id);
+  return id;
+}
+
+function applyRunRecord(record) {
+  const run = state.run;
+  if (!run || !record || typeof record !== "object" || record.record !== "node") return;
+  const id = matchRunNode(run, record);
+  if (id === null) return;
+
+  const status = String(record.status ?? "");
+  if (status === "ok") {
+    run.outcomes.set(id, "ok");
+    run.retrying.delete(id);
+  } else if (status === "skipped") {
+    run.outcomes.set(id, "skipped");
+    run.retrying.delete(id);
+  } else {
+    const retries = Number(run.nodesById.get(id)?.policy?.retries ?? 0);
+    const attempt = Number(record.attempt ?? 0);
+    if (attempt > 0 && attempt <= retries) {
+      run.retrying.add(id);
+    } else {
+      run.outcomes.set(id, "error");
+      run.retrying.delete(id);
+    }
+  }
+  refreshRunGraph();
+}
+
+function refreshRunGraph() {
+  const run = state.run;
+  if (!run) return;
+  const states = new Map();
+  for (const id of run.nodesById.keys()) {
+    const outcome = run.outcomes.get(id);
+    if (outcome) {
+      states.set(id, outcome);
+      continue;
+    }
+    const deps = run.deps.get(id) || [];
+    if (run.retrying.has(id) || deps.every((dep) => run.outcomes.get(dep) === "ok")) {
+      states.set(id, "running");
+    }
+  }
+  setGraphNodeStates(ui.graph, states);
+}
+
+function finishRunGraph() {
+  const run = state.run;
+  if (!run) return;
+  setGraphNodeStates(ui.graph, new Map(run.outcomes));
+  state.run = null;
+}
+
 // ----------------------------------------------------------------- execute ----
 
 async function execute() {
@@ -1000,6 +1161,7 @@ async function execute() {
   ui.log.replaceChildren();
   setJobStatus("starting…");
   lockRootForRun();
+  startRunGraph();
 
   try {
     const data = await postJson("/api/execute", buildPayload());
@@ -1012,6 +1174,7 @@ async function execute() {
     ui.cancel.classList.add("hidden");
     ui.execute.disabled = !state.plan;
     state.jobId = null;
+    finishRunGraph();
     unlockRootAfterRun();
   }
 }
@@ -1030,7 +1193,9 @@ function openStream(jobId) {
   });
   source.addEventListener("log", (event) => {
     const data = parseEvent(event);
-    appendLog(data?.record ?? data);
+    const record = data?.record ?? data;
+    applyRunRecord(record);
+    appendLog(record);
   });
   source.addEventListener("done", (event) => {
     const data = parseEvent(event);
@@ -1054,6 +1219,7 @@ function parseEvent(event) {
 
 function finishRun(data) {
   setJobStatus(data?.state || "done");
+  finishRunGraph();
   showResult(data?.result, data?.state, data?.error);
   if (data?.result && Array.isArray(data.result.warnings)) {
     renderWarnings(data.result.warnings);

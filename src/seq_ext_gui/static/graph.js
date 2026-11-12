@@ -383,3 +383,16 @@ export function selectGraphNode(svg, id) {
     group.classList.toggle("selected", group.getAttribute("data-node-id") === wanted);
   }
 }
+
+const NODE_STATE_CLASSES = ["running", "ok", "error", "skipped"];
+
+// Toggle execution-state classes (`running`, `ok`, `error`, `skipped`) on the
+// rendered graph. Pass a Map keyed by plan node id; ids not in the map clear.
+export function setGraphNodeStates(svg, states) {
+  const byId = states instanceof Map ? states : new Map(Object.entries(states || {}));
+  for (const group of svg.querySelectorAll(".graph-node")) {
+    const nodeId = group.getAttribute("data-node-id");
+    const next = nodeId === null ? null : (byId.get(nodeId) ?? null);
+    for (const name of NODE_STATE_CLASSES) group.classList.toggle(name, name === next);
+  }
+}

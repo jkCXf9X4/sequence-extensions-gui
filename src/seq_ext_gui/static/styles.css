@@ -496,6 +496,38 @@ input:disabled, select:disabled, textarea:disabled {
   fill: #17303f;
 }
 
+.graph-node.running .node-box {
+  stroke: var(--accent);
+  stroke-width: 2;
+  fill: #102d3f;
+  animation: node-pulse 1.1s ease-in-out infinite;
+}
+
+.graph-node.ok .node-box {
+  stroke: var(--ok);
+  fill: #12291d;
+}
+
+.graph-node.error .node-box {
+  stroke: var(--err);
+  fill: #2a161a;
+}
+
+.graph-node.skipped .node-box {
+  stroke: var(--border-strong);
+  stroke-dasharray: 4 3;
+  opacity: 0.6;
+}
+
+@keyframes node-pulse {
+  0%, 100% { stroke-opacity: 1; }
+  50% { stroke-opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-node.running .node-box { animation: none; }
+}
+
 .node-name {
   fill: var(--text);
   font-family: var(--mono);
