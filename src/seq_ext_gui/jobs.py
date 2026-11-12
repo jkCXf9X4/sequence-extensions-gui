@@ -85,8 +85,32 @@ class JobManager:
         timeout: float | None = None,
     ) -> WorkerResult:
         """Run one plan-mode worker to completion and return its result."""
-        job = self._create(f"eval-{uuid.uuid4().hex}", request)
-        worker_request = WorkerRequest(mode="plan", **request.model_dump(exclude_unset=True))
+        return await self._run(
+            request, mode="plan", activity="evaluation", timeout=timeout, prefix="eval"
+        )
+
+    async def discover(
+        self,
+        request: JobRequest,
+        *,
+        timeout: float | None = None,
+    ) -> WorkerResult:
+        """Run one discover-mode worker to completion and return its result."""
+        return await self._run(
+            request, mode="discover", activity="discovery", timeout=timeout, prefix="discover"
+        )
+
+    async def _run(
+        self,
+        request: JobRequest,
+        *,
+        mode: str,
+        activity: str,
+        timeout: float | None,
+        prefix: str,
+    ) -> WorkerResult:
+        job = self._create(f"{prefix}-{uuid.uuid4().hex}", request)
+        worker_request = WorkerRequest(mode=mode, **request.model_dump(exclude_unset=True))
         self._write_request(job, worker_request)
         limit = self.evaluate_timeout if timeout is None else float(timeout)
 
@@ -103,7 +127,7 @@ class JobManager:
         except OSError as exc:
             return WorkerResult(
                 ok=False,
-                mode="plan",
+                mode=mode,
                 error=f"cannot start worker: {exc}",
                 error_type=type(exc).__name__,
             )
@@ -114,8 +138,8 @@ class JobManager:
             await self._terminate(process)
             return WorkerResult(
                 ok=False,
-                mode="plan",
-                error=f"evaluation timed out after {limit:g} s",
+                mode=mode,
+                error=f"{activity} timed out after {limit:g} s",
                 error_type="TimeoutError",
             )
 
@@ -126,7 +150,7 @@ class JobManager:
                 error = f"{error}: {text}"
             return WorkerResult(
                 ok=False,
-                mode="plan",
+                mode=mode,
                 error=error,
                 error_type="WorkerExit",
                 traceback=text or None,
@@ -139,7 +163,7 @@ class JobManager:
                 error = f"{error}: {text}"
             return WorkerResult(
                 ok=False,
-                mode="plan",
+                mode=mode,
                 error=error,
                 error_type="WorkerError",
                 traceback=text or None,

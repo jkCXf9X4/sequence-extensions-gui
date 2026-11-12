@@ -12,6 +12,8 @@ import hashlib
 import importlib
 import importlib.util
 import inspect
+import json
+import math
 import os
 import sys
 import time
@@ -33,7 +35,9 @@ from sequence_extensions.flow_runner import find_nodes
 
 from .contracts import (
     PLAN_SCHEMA,
+    NodeCard,
     Param,
+    ParamSpec,
     PlanEdge,
     PlanNode,
     PlanOptions,
@@ -64,7 +68,7 @@ def plan(request: WorkerRequest) -> WorkerResult:
             seed = request.plan
             if seed is not None:
                 _require_document(seed)
-            root_kwargs = _root_values(fn, seed)
+            root_kwargs = _root_values(fn, seed, request.root_values)
             fresh = plan_document(fn, options=_run_options(seed), **root_kwargs)
             document = fresh
             if seed is not None:
@@ -83,6 +87,25 @@ def plan(request: WorkerRequest) -> WorkerResult:
         )
     except Exception as exc:
         return _error_result(request, exc, started, "plan")
+
+
+def discover(request: WorkerRequest) -> WorkerResult:
+    """List every ``@node`` in the flow module without running node bodies."""
+    started = time.monotonic()
+    try:
+        with _working_directory(request) as flow_file:
+            if flow_file.suffix != ".py":
+                raise EngineError(f"flow file must be a .py file: {request.flow_file!r}")
+            module = _import_flow_module(flow_file)
+            cards = [_node_card(name, node) for name, node in find_nodes(module).items()]
+        return WorkerResult(
+            ok=True,
+            mode="discover",
+            nodes=cards,
+            duration_ms=_elapsed_ms(started),
+        )
+    except Exception as exc:
+        return _error_result(request, exc, started, "discover")
 
 
 def execute(request: WorkerRequest) -> WorkerResult:
@@ -220,8 +243,15 @@ def _run_options(document: dict[str, Any] | None) -> RunOptions:
     return RunOptions(**options.model_dump())
 
 
-def _root_values(fn: NodeFunction, document: dict[str, Any] | None) -> dict[str, Any]:
-    """Decode the seed plan's root parameters into keyword arguments."""
+def _root_values(
+    fn: NodeFunction,
+    document: dict[str, Any] | None,
+    root_values: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Decode root parameters into keyword arguments.
+
+    Seed document values are read first; explicit ``root_values`` win by name.
+    """
     signature = inspect.signature(fn.fn)
     params = [
         parameter
@@ -240,8 +270,14 @@ def _root_values(fn: NodeFunction, document: dict[str, Any] | None) -> dict[str,
         value = entry.get("value")
         if value is not None:
             values[name] = decode_value(value, types[name])
+    for name, value in (root_values or {}).items():
+        if name not in types:
+            unknown.append(name)
+            continue
+        if value is not None:
+            values[name] = decode_value(value, types[name])
     if unknown:
-        listed = ", ".join(sorted(repr(name) for name in unknown))
+        listed = ", ".join(sorted({repr(name) for name in unknown}))
         raise EngineError(f"unknown root parameter(s): {listed}")
 
     missing = [
@@ -292,6 +328,106 @@ def _override_from_seed(
     if node_overrides:
         override["nodes"] = node_overrides
     return override
+
+
+def _node_card(name: str, node: Any) -> NodeCard:
+    doc = (inspect.getdoc(node) or "").strip()
+    summary = doc.splitlines()[0] if doc else ""
+    wrapped = getattr(node, "fn", node)
+    return NodeCard(
+        name=name,
+        summary=summary,
+        signature=_signature_preview(wrapped),
+        params=_param_specs(wrapped),
+    )
+
+
+def _param_specs(fn: Any) -> list[ParamSpec]:
+    """Describe the root parameters discovery exposes, by signature only."""
+    signature = inspect.signature(fn)
+    return [
+        _param_spec(parameter)
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in {parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY}
+    ]
+
+
+def _param_spec(parameter: inspect.Parameter) -> ParamSpec:
+    default, note = _display_default(parameter.default)
+    return ParamSpec(
+        name=parameter.name,
+        type=_annotation_name(parameter.annotation),
+        required=parameter.default is inspect.Parameter.empty,
+        default=default,
+        default_note=note,
+    )
+
+
+def _display_default(value: Any) -> tuple[Any, str | None]:
+    """Return a JSON-safe default and an optional note explaining a lossy one."""
+    if value is inspect.Parameter.empty:
+        return None, None
+    if isinstance(value, Path):
+        return str(value), None
+    if isinstance(value, bool | int | str):
+        return value, None
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value, None
+        return repr(value), "non-finite float"
+    if isinstance(value, list | tuple | dict):
+        try:
+            return json.loads(json.dumps(value)), None
+        except (TypeError, ValueError):
+            return None, f"unsupported value type: {type(value).__name__}"
+    return None, f"unsupported value type: {type(value).__name__}"
+
+
+def _signature_preview(fn: Any) -> str:
+    """Render ``inspect.signature`` using readable annotation names."""
+    signature = inspect.signature(fn)
+    parameters = list(signature.parameters.values())
+    rendered: list[str] = []
+    keyword_only_marker = False
+    positional_only_marker = False
+
+    for index, parameter in enumerate(parameters):
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY and not keyword_only_marker:
+            if not any(
+                earlier.kind is inspect.Parameter.VAR_POSITIONAL
+                for earlier in parameters[:index]
+            ):
+                rendered.append("*")
+            keyword_only_marker = True
+
+        prefix = ""
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            prefix = "*"
+        elif parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            prefix = "**"
+        text = prefix + parameter.name
+        annotation = _annotation_name(parameter.annotation)
+        if annotation:
+            text += f": {annotation}"
+        if parameter.default is not inspect.Parameter.empty:
+            text += f" = {parameter.default!r}"
+        rendered.append(text)
+
+        if (
+            parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+            and not positional_only_marker
+            and (
+                index + 1 == len(parameters)
+                or parameters[index + 1].kind is not inspect.Parameter.POSITIONAL_ONLY
+            )
+        ):
+            rendered.append("/")
+            positional_only_marker = True
+
+    preview = f"({', '.join(rendered)})"
+    returns = _annotation_name(signature.return_annotation)
+    return f"{preview} -> {returns}" if returns else preview
 
 
 def _annotation_name(annotation: Any) -> str:

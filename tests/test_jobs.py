@@ -218,6 +218,21 @@ def test_evaluate_uses_plan_mode(tmp_path: Path, fake_worker: Path) -> None:
     asyncio.run(run())
 
 
+def test_discover_uses_discover_mode(tmp_path: Path, fake_worker: Path) -> None:
+    async def run() -> None:
+        manager = make_manager(tmp_path, fake_worker)
+        result = await manager.discover(JobRequest(flow_file="flow.py"))
+        assert result.ok is True
+        assert result.mode == "discover"
+
+        jobs_dir = tmp_path / "project" / ".seq_ext_gui" / "jobs"
+        request_path = next(jobs_dir.glob("*/request.json"))
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        assert request["mode"] == "discover"
+
+    asyncio.run(run())
+
+
 def test_execute_worker_crash_marks_failed(tmp_path: Path) -> None:
     async def run() -> None:
         root = tmp_path / "project"

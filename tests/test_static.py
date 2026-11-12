@@ -178,6 +178,48 @@ def test_file_browser_routes_py_and_json() -> None:
     assert "await importPlanText(" in source
 
 
+def test_node_inventory_discovery() -> None:
+    html = read("index.html")
+    source = read("app.js")
+
+    assert 'id="node-inventory"' in html
+    assert 'class="node-inventory"' in html
+    assert 'aria-label="Node inventory"' in html
+    assert 'role="listbox"' in html
+
+    assert "/api/discover" in source
+    assert "function loadNodeInventory" in source
+    assert "function renderNodeCards" in source
+    assert "data-node-name" in source
+    assert 'postJson("/api/discover", { flow_file: path })' in source
+    assert "function selectFlow" in source
+    assert "Select a .py file to list nodes." in source
+    assert "Loading nodes…" in source
+    assert "No nodes found." in source
+    assert 'card.className = "node-card"' in source
+    assert 'label.textContent = "preview"' in source
+
+
+def test_root_preview_and_required_inputs() -> None:
+    html = read("index.html")
+    source = read("app.js")
+
+    assert 'id="flow-select"' not in html
+    for removed in ("flow-params", "flow-params-status", "flow-params-error"):
+        assert f'id="{removed}"' not in html
+
+    assert "function buildRootPreview" in source
+    assert "function applyPreviewPlan" in source
+    assert "state.preview" in source
+    assert '"preview"' in source
+    assert "function validateRequiredInputs" in source
+    assert "Missing required flow parameter(s): " in source
+    assert "Fill required inputs, then Evaluate." in source
+
+    body = function_body(source, "buildPayload")
+    assert "root_values" not in body, "buildPayload still sends root_values"
+
+
 def test_run_options_mutate_the_plan() -> None:
     source = read("app.js")
     body = function_body(source, "readOptions")

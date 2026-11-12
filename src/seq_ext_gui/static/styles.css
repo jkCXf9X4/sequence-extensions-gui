@@ -230,6 +230,79 @@ input:disabled, select:disabled, textarea:disabled {
   font-size: 11px;
 }
 
+.node-inventory {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-height: 190px;
+  overflow-y: auto;
+  background: var(--bg-input);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.node-inventory .muted,
+.node-inventory .error {
+  margin: 0;
+  padding: 6px 8px;
+}
+
+.node-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 5px 8px;
+}
+
+.node-card:hover:not(:disabled) { background: var(--bg-raised); }
+.node-card:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.node-card.selected { background: var(--accent-dim); }
+
+.node-card-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.node-card-doc {
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-card-sig {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.node-card-label {
+  flex: none;
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.node-card-sig code {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .field {
   display: grid;
   grid-template-columns: 78px minmax(0, 1fr);

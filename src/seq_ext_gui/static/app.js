@@ -12,9 +12,9 @@ const ui = {
   rootStatus: $("root-status"),
   crumbs: $("crumbs"),
   fileList: $("file-list"),
+  nodeInventory: $("node-inventory"),
   refreshTree: $("refresh-tree"),
   flowFile: $("flow-file"),
-  flowSelect: $("flow-select"),
   planStatus: $("plan-status"),
   importPlan: $("import-plan"),
   exportPlan: $("export-plan"),
@@ -60,7 +60,9 @@ const state = {
   entries: [],
   flowFile: null,
   flowName: null,
+  nodes: [],
   plan: null,
+  preview: false,
   selectedId: null,
   dirty: false,
   jobId: null,
@@ -68,6 +70,7 @@ const state = {
 };
 
 let widgetSeq = 0;
+let nodeInventoryToken = 0;
 
 function nextId(prefix) {
   widgetSeq += 1;
@@ -210,9 +213,10 @@ function resetForRoot() {
   state.flowFile = null;
   state.flowName = null;
   state.selectedId = null;
+  state.nodes = [];
+  nodeInventoryToken += 1;
   ui.flowFile.textContent = "none";
-  ui.flowSelect.value = "";
-  populateFlowSelect([]);
+  renderNodeCards("Select a .py file to list nodes.");
   ui.planFile.value = "";
   clearPlan();
   ui.log.replaceChildren();
@@ -291,15 +295,10 @@ async function selectFile(path) {
       ui.flowFile.textContent = path;
       hideEvalError();
       renderWarnings([]);
-      populateFlowSelect([]);
-      if (state.plan) {
-        // Keep an imported/edited plan so it can be evaluated against this flow.
-        markDirty();
-      } else {
-        clearPlan();
-      }
+      clearPlan();
     }
     renderFiles(state.entries);
+    await loadNodeInventory(path);
     return;
   }
   if (lower.endsWith(".json")) {
@@ -314,6 +313,7 @@ async function selectFile(path) {
 
 function clearPlan() {
   state.plan = null;
+  state.preview = false;
   state.selectedId = null;
   state.dirty = false;
   ui.execute.disabled = true;
@@ -329,35 +329,146 @@ function clearPlan() {
   setOptionsEnabled(false);
 }
 
-function populateFlowSelect(flows) {
-  const names = Array.isArray(flows) ? flows : [];
-  const previous = state.flowName || "";
-  ui.flowSelect.replaceChildren();
-  const auto = document.createElement("option");
-  auto.value = "";
-  auto.textContent = "(auto)";
-  ui.flowSelect.append(auto);
-  for (const name of names) {
-    const option = document.createElement("option");
-    option.value = String(name);
-    option.textContent = String(name);
-    ui.flowSelect.append(option);
+function selectFlow(name) {
+  const value = name || "";
+  if (value === (state.flowName || "")) return;
+  state.flowName = value || null;
+  syncNodeSelection();
+  const card = state.nodes.find((node) => String(node?.name ?? "") === value);
+  if (card) applyPreviewPlan(card);
+  else clearPlan();
+}
+
+function syncNodeSelection() {
+  for (const card of ui.nodeInventory.querySelectorAll(".node-card")) {
+    const selected = card.dataset.nodeName === state.flowName;
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-selected", selected ? "true" : "false");
   }
-  if (previous && names.includes(previous)) {
-    ui.flowSelect.value = previous;
-  } else {
-    ui.flowSelect.value = "";
-    if (state.flowName && !names.includes(state.flowName)) state.flowName = null;
+}
+
+// ---------------------------------------------------------- node inventory ----
+
+async function loadNodeInventory(path) {
+  const token = ++nodeInventoryToken;
+  state.nodes = [];
+  renderNodeCards("Loading nodes…");
+  try {
+    const data = await postJson("/api/discover", { flow_file: path });
+    if (token !== nodeInventoryToken) return;
+    if (!data || data.ok === false || data.error) {
+      const error = data?.error ? String(data.error) : "No nodes found.";
+      state.nodes = [];
+      renderNodeCards(error, "error");
+      return;
+    }
+    state.nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    renderNodeCards();
+    if (state.nodes.length === 1 && !state.flowName) {
+      selectFlow(state.nodes[0].name);
+    }
+  } catch (error) {
+    if (token !== nodeInventoryToken) return;
+    state.nodes = [];
+    renderNodeCards(`Cannot discover nodes: ${error.message}`, "error");
   }
-  ui.flowSelect.disabled = names.length === 0;
+}
+
+function renderNodeCards(emptyText, emptyClass) {
+  ui.nodeInventory.replaceChildren();
+  const nodes = Array.isArray(state.nodes) ? state.nodes : [];
+  if (!nodes.length) {
+    ui.nodeInventory.append(message(emptyText || "No nodes found.", emptyClass || "muted"));
+    return;
+  }
+  for (const node of nodes) {
+    ui.nodeInventory.append(buildNodeCard(node));
+  }
+}
+
+function buildNodeCard(node) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "node-card";
+  card.setAttribute("role", "option");
+  const name = String(node?.name ?? "");
+  card.setAttribute("data-node-name", name);
+
+  const nameNode = document.createElement("span");
+  nameNode.className = "node-card-name";
+  nameNode.textContent = name;
+  card.append(nameNode);
+
+  const summary = String(node?.summary ?? "").trim();
+  if (summary) {
+    const doc = document.createElement("span");
+    doc.className = "node-card-doc";
+    doc.textContent = summary;
+    card.append(doc);
+  }
+
+  const signature = document.createElement("span");
+  signature.className = "node-card-sig";
+  const label = document.createElement("span");
+  label.className = "node-card-label";
+  label.textContent = "preview";
+  const code = document.createElement("code");
+  code.textContent = String(node?.signature ?? "");
+  signature.append(label, code);
+  card.append(signature);
+
+  const selected = name === state.flowName;
+  if (selected) card.classList.add("selected");
+  card.setAttribute("aria-selected", selected ? "true" : "false");
+  card.addEventListener("click", () => selectFlow(name));
+  return card;
 }
 
 // ------------------------------------------------------------------- plan ----
 
 function markDirty() {
-  if (!state.plan) return;
+  if (!state.plan || state.preview) return;
   state.dirty = true;
   ui.dirtyHint.classList.remove("hidden");
+}
+
+function buildRootPreview(card) {
+  const params = Array.isArray(card?.params) ? card.params : [];
+  return {
+    schema: PLAN_SCHEMA,
+    parameters: params.map((param) => ({
+      name: param.name,
+      type: param.type ?? "",
+      required: Boolean(param.required),
+      default: param.default ?? null,
+      value: param.default ?? null,
+    })),
+    nodes: [],
+    edges: [],
+    options: { ...OPTION_DEFAULTS },
+  };
+}
+
+function applyPreviewPlan(card) {
+  const preview = buildRootPreview(card);
+  state.plan = preview;
+  state.preview = true;
+  state.selectedId = ROOT_NODE_ID;
+  state.dirty = false;
+  ui.dirtyHint.classList.add("hidden");
+  ui.execute.disabled = true;
+  ui.exportPlan.disabled = true;
+  ui.planStatus.textContent = "preview";
+  ui.graphEmpty.classList.add("hidden");
+  syncOptions();
+  setOptionsEnabled(true);
+  renderGraph(ui.graph, preview, {
+    onSelect: selectNode,
+    selectedId: ROOT_NODE_ID,
+    rootLabel: state.flowName || "",
+    emptyText: "Fill required inputs, then Evaluate.",
+  });
+  renderNodeEditor();
 }
 
 // Convert a wire/imported plan into the pure engine document. Display-only
@@ -408,6 +519,7 @@ function buildPayload() {
 
 function applyPlan(plan) {
   state.plan = plan;
+  state.preview = false;
   state.selectedId = ROOT_NODE_ID;
   state.dirty = false;
   ui.dirtyHint.classList.add("hidden");
@@ -448,6 +560,10 @@ async function importPlanText(text, label) {
 }
 
 function exportPlan() {
+  if (state.preview) {
+    showEvalError("Evaluate first: preview is not a plan.");
+    return;
+  }
   if (!state.plan) {
     showEvalError("Nothing to export: evaluate or import a plan first.");
     return;
@@ -464,12 +580,46 @@ function exportPlan() {
   URL.revokeObjectURL(url);
 }
 
+function validateRequiredInputs() {
+  const missing = [];
+  for (const param of state.plan?.parameters || []) {
+    if (!param.required) continue;
+    const value = param.value;
+    if (value === undefined || value === null) {
+      missing.push(param.name);
+      continue;
+    }
+    if (typeof value === "string" && value.trim() === "") {
+      missing.push(param.name);
+      continue;
+    }
+    if (
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof value.path === "string" &&
+      value.path.trim() === ""
+    ) {
+      missing.push(param.name);
+    }
+  }
+  return missing;
+}
+
 async function evaluate() {
   if (!state.flowFile) {
     showEvalError("Select a .py flow file first.");
     return;
   }
+  if (!state.flowName) {
+    showEvalError("Select a node first.");
+    return;
+  }
   hideEvalError();
+  const missing = validateRequiredInputs();
+  if (missing.length) {
+    showEvalError(`Missing required flow parameter(s): ${missing.join(", ")}`);
+    return;
+  }
   ui.evaluate.disabled = true;
   ui.evaluate.textContent = "Evaluating…";
   try {
@@ -488,7 +638,6 @@ function handleEvaluateResult(result) {
     showEvalError("Evaluate returned an unexpected response.");
     return;
   }
-  if (Array.isArray(result.available_flows)) populateFlowSelect(result.available_flows);
   renderWarnings(result.warnings);
 
   if (!result.ok) {
@@ -503,19 +652,9 @@ function handleEvaluateResult(result) {
   }
 
   hideEvalError();
-  if (result.flow_name) {
+  if (result.flow_name && result.flow_name !== state.flowName) {
     state.flowName = result.flow_name;
-    const known = [...ui.flowSelect.options].some(
-      (option) => option.value === result.flow_name,
-    );
-    if (!known) {
-      const option = document.createElement("option");
-      option.value = result.flow_name;
-      option.textContent = result.flow_name;
-      ui.flowSelect.append(option);
-      ui.flowSelect.disabled = false;
-    }
-    ui.flowSelect.value = result.flow_name;
+    syncNodeSelection();
   }
   applyPlan(result.plan);
 }
@@ -656,6 +795,19 @@ function buildParam(param, commit) {
   return row;
 }
 
+function displayParamValue(value, type) {
+  if (
+    String(type || "").toLowerCase().includes("path") &&
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof value.path === "string"
+  ) {
+    return value.path;
+  }
+  return value;
+}
+
 function renderNodeEditor() {
   ui.nodeEditor.replaceChildren();
   if (!state.plan) {
@@ -672,7 +824,7 @@ function renderNodeEditor() {
     }
     for (const param of params) {
       ui.nodeEditor.append(
-        buildParam(param, (value) => {
+        buildParam({ ...param, value: displayParamValue(param.value, param.type) }, (value) => {
           param.value = value;
           markDirty();
         }),
@@ -706,7 +858,7 @@ function renderNodeEditor() {
   } else {
     for (const param of params) {
       ui.nodeEditor.append(
-        buildParam(param, (value) => {
+        buildParam({ ...param, value: displayParamValue(param.value, param.type) }, (value) => {
           for (const candidate of state.plan?.nodes || []) {
             if (candidate.name !== node.name) continue;
             for (const other of candidate.params || []) {
@@ -1132,16 +1284,12 @@ ui.planFile.addEventListener("change", () => {
     .catch((error) => showEvalError(`Cannot read ${file.name}: ${error.message}`));
 });
 
-ui.flowSelect.addEventListener("change", () => {
-  state.flowName = ui.flowSelect.value || null;
-  markDirty();
-});
-
 for (const input of OPTION_INPUTS) {
   input.addEventListener("input", readOptions);
   input.addEventListener("change", readOptions);
 }
 
+renderNodeCards("Select a .py file to list nodes.");
 syncOptions();
 setOptionsEnabled(false);
 

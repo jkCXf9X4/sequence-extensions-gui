@@ -47,6 +47,16 @@ class Param(BaseModel):
     note: str | None = None
 
 
+class ParamSpec(BaseModel):
+    """One root parameter of a ``@node`` as discovery reports it."""
+
+    name: str
+    type: str = ""
+    required: bool = False
+    default: Any = None
+    default_note: str | None = None
+
+
 class PlanNode(BaseModel):
     id: int
     name: str
@@ -105,12 +115,13 @@ class JobRequest(BaseModel):
     flow_file: str
     flow_name: str | None = None
     plan: dict[str, Any] | None = None
+    root_values: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
 
 class WorkerRequest(JobRequest):
-    mode: Literal["plan", "execute"]
+    mode: Literal["plan", "execute", "discover"]
     log_dir: str | None = None
 
 
@@ -129,11 +140,21 @@ class RunResult(BaseModel):
     failed_nodes: list[list[str]] = Field(default_factory=list)
 
 
+class NodeCard(BaseModel):
+    """One ``@node`` as the discovery view reports it."""
+
+    name: str
+    summary: str = ""
+    signature: str = ""
+    params: list[ParamSpec] = Field(default_factory=list)
+
+
 class WorkerResult(BaseModel):
     ok: bool
     mode: str = "plan"
     flow_name: str | None = None
     available_flows: list[str] = Field(default_factory=list)
+    nodes: list[NodeCard] = Field(default_factory=list)
     plan: WirePlan | None = None
     run: RunResult | None = None
     warnings: list[str] = Field(default_factory=list)

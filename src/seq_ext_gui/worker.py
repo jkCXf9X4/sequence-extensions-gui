@@ -12,7 +12,17 @@ import traceback
 from pathlib import Path
 
 from .contracts import WorkerRequest, WorkerResult
-from .engine import execute, plan
+from .engine import discover, execute, plan
+
+
+def _dispatch(request: WorkerRequest) -> WorkerResult:
+    if request.mode == "execute":
+        return execute(request)
+    if request.mode == "discover":
+        return discover(request)
+    if request.mode == "plan":
+        return plan(request)
+    raise ValueError(f"unknown worker mode: {request.mode!r}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         request = WorkerRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
         mode = request.mode
-        result = execute(request) if request.mode == "execute" else plan(request)
+        result = _dispatch(request)
     except Exception as exc:
         traceback.print_exc()
         result = WorkerResult(

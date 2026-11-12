@@ -49,18 +49,32 @@ time.sleep(0.2)
 if log_path is not None:
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"node": "root", "event": "done"}) + "\\n")
-result_path.write_text(
-    json.dumps(
-        {
-            "ok": True,
-            "mode": request.get("mode", "plan"),
-            "flow_name": request.get("flow_name") or "root",
-            "plan": request.get("plan"),
-            "duration_ms": 1,
-        }
-    ),
-    encoding="utf-8",
-)
+if request.get("mode") == "discover":
+    result_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "mode": "discover",
+                "nodes": [
+                    {"name": "root", "summary": "Root node.", "signature": "() -> None"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    raise SystemExit(0)
+result = {
+    "ok": True,
+    "mode": request.get("mode", "plan"),
+    "flow_name": request.get("flow_name") or "root",
+    "plan": request.get("plan"),
+    "duration_ms": 1,
+}
+if request.get("root_values") is not None:
+    result["warnings"] = [
+        "root_values:" + json.dumps(request["root_values"], sort_keys=True)
+    ]
+result_path.write_text(json.dumps(result), encoding="utf-8")
 '''
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
@@ -129,7 +143,7 @@ def test_tree(client: TestClient) -> None:
     body = response.json()
     assert body["path"] == ""
     names = [entry["name"] for entry in body["entries"]]
-    assert names == ["failing.py", "flow.py", "required.py"]
+    assert names == ["failing.py", "flow.py", "required.py", "typed.py"]
     assert all(entry["kind"] == "file" for entry in body["entries"])
 
 
@@ -197,6 +211,49 @@ def test_evaluate_returns_the_worker_result(client: TestClient) -> None:
     # PlanOptions fills concrete defaults for a document that omitted them.
     assert body["plan"]["options"]["max_workers"] == 16
     assert body["plan"]["options"]["timeout"] is None
+
+
+def test_evaluate_accepts_root_values(client: TestClient) -> None:
+    response = client.post(
+        "/api/evaluate",
+        json={"flow_file": "flow.py", "flow_name": "root", "root_values": {"n": 4}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["warnings"] == ['root_values:{"n": 4}']
+
+
+def test_discover_returns_node_cards(client: TestClient) -> None:
+    response = client.post("/api/discover", json={"flow_file": "flow.py"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["mode"] == "discover"
+    assert body["nodes"] == [
+        {"name": "root", "summary": "Root node.", "signature": "() -> None", "params": []}
+    ]
+
+
+def test_discover_paths_outside_root_are_400(client: TestClient) -> None:
+    response = client.post("/api/discover", json={"flow_file": "../outside.py"})
+    assert response.status_code == 400
+
+
+@pytest.mark.integration
+def test_discover_rejects_a_non_python_file(sample_project) -> None:
+    (sample_project.root / "notes.txt").write_text("not a flow\n", encoding="utf-8")
+
+    with TestClient(create_app(sample_project.root)) as test_client:
+        response = test_client.post("/api/discover", json={"flow_file": "notes.txt"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["mode"] == "discover"
+    assert ".py" in body["error"]
 
 
 def test_execute_job_status_and_sse(client: TestClient) -> None:

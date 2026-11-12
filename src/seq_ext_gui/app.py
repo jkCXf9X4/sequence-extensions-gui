@@ -106,6 +106,10 @@ def create_app(
     async def evaluate(payload: JobRequest) -> WorkerResult:
         return await jobs.evaluate(_confined_job(files, payload))
 
+    @app.post("/api/discover", response_model=WorkerResult)
+    async def discover(payload: JobRequest) -> WorkerResult:
+        return await jobs.discover(_confined_job(files, payload))
+
     @app.post("/api/execute")
     async def execute(payload: JobRequest) -> dict[str, str]:
         job_id = await jobs.start(_confined_job(files, payload))

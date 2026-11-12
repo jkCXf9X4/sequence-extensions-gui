@@ -19,6 +19,10 @@ from sequence_extensions.flow import gather, node
 
 @node
 def double(x: int) -> int:
+    """Double one value.
+
+    This second line must not leak into the card summary.
+    """
     return x * 2
 
 
@@ -67,6 +71,19 @@ def failing() -> None:
     return boom.submit()
 '''
 
+TYPED_FLOW = '''\
+"""Sample flow with one root parameter of each scalar type."""
+
+from __future__ import annotations
+
+from sequence_extensions.flow import node
+
+
+@node
+def typed(n: int = 1, ratio: float = 1.5, flag: bool = False, label: str = "x") -> str:
+    return f"{n}:{ratio}:{flag}:{label}"
+'''
+
 #: A hand-written ``flow-plan/2`` seed: only the values a user edited.  The GUI
 #: imports a document like this, and ``engine.plan`` folds it onto fresh code.
 SAMPLE_PLAN: dict[str, Any] = {
@@ -94,6 +111,7 @@ class SampleProject:
     flow: Path
     required: Path
     failing: Path
+    typed: Path
 
     def write_plan(self, document: dict[str, Any], name: str = "plan.json") -> Path:
         path = self.root / name
@@ -121,7 +139,11 @@ def sample_project(tmp_path: Path) -> SampleProject:
     required.write_text(REQUIRED_FLOW, encoding="utf-8")
     failing = root / "failing.py"
     failing.write_text(FAILING_FLOW, encoding="utf-8")
-    return SampleProject(root=root, flow=flow, required=required, failing=failing)
+    typed = root / "typed.py"
+    typed.write_text(TYPED_FLOW, encoding="utf-8")
+    return SampleProject(
+        root=root, flow=flow, required=required, failing=failing, typed=typed
+    )
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from seq_ext_gui.contracts import WorkerRequest
-from seq_ext_gui.engine import execute, plan
+from seq_ext_gui.engine import discover, execute, plan
 
 DEFAULT_OPTIONS = {
     "max_workers": 16,
@@ -135,6 +135,96 @@ def test_plan_rejects_unknown_root_parameters(sample_project) -> None:
     assert "unknown root parameter" in (result.error or "")
 
 
+def test_plan_accepts_root_values_without_a_seed(sample_project) -> None:
+    planned = plan(
+        WorkerRequest(
+            mode="plan",
+            flow_file=str(sample_project.required),
+            flow_name="needs_input",
+            root_values={"cases_dir": "cases"},
+        )
+    )
+
+    assert planned.ok, planned.error
+    assert planned.plan is not None
+    parameter = next(param for param in planned.plan.parameters if param.name == "cases_dir")
+    assert parameter.value["path"] == "cases"
+    assert parameter.value["sha256"] is None
+
+    document = json.loads(json.dumps(planned.plan.to_document()))
+    result = execute(
+        WorkerRequest(
+            mode="execute",
+            flow_file=str(sample_project.required),
+            flow_name="needs_input",
+            plan=document,
+        )
+    )
+    assert result.ok, result.error
+    assert result.run is not None
+    assert result.run.result == "cases"
+
+
+def test_plan_decodes_typed_root_values(sample_project) -> None:
+    result = plan(
+        WorkerRequest(
+            mode="plan",
+            flow_file=str(sample_project.typed),
+            flow_name="typed",
+            root_values={"n": "4", "ratio": "2.5", "flag": "true", "label": "seven"},
+        )
+    )
+
+    assert result.ok, result.error
+    assert result.plan is not None
+    parameters = {param.name: param.value for param in result.plan.parameters}
+    assert parameters == {"n": 4, "ratio": 2.5, "flag": True, "label": "seven"}
+
+
+def test_plan_skips_null_root_values(sample_project) -> None:
+    result = plan(_request(sample_project, root_values={"n": None}))
+
+    assert result.ok, result.error
+    assert result.plan is not None
+    parameters = {param.name: param.value for param in result.plan.parameters}
+    assert parameters["n"] == 2
+
+
+def test_plan_rejects_unknown_root_values(sample_project) -> None:
+    result = plan(_request(sample_project, root_values={"bogus": 1}))
+
+    assert result.ok is False
+    assert "unknown root parameter(s): 'bogus'" in (result.error or "")
+
+
+def test_plan_with_root_values_still_requires_required_names(sample_project) -> None:
+    result = plan(
+        WorkerRequest(
+            mode="plan",
+            flow_file=str(sample_project.required),
+            flow_name="needs_input",
+            root_values={},
+        )
+    )
+
+    assert result.ok is False
+    assert "missing required root parameter(s): cases_dir" in (result.error or "")
+
+
+def test_root_values_override_seed_parameters(sample_project) -> None:
+    seed = {
+        "schema": "flow-plan/2",
+        "parameters": [{"name": "n", "type": "int", "default": 2, "value": 5}],
+    }
+
+    result = plan(_request(sample_project, plan=seed, root_values={"n": 4}))
+
+    assert result.ok, result.error
+    assert result.plan is not None
+    parameters = {param.name: param.value for param in result.plan.parameters}
+    assert parameters["n"] == 4
+
+
 def test_plan_round_trips_a_path_parameter(sample_project) -> None:
     seed = {
         "schema": "flow-plan/2",
@@ -182,6 +272,68 @@ def test_execute_requires_a_plan(sample_project) -> None:
 
     assert result.ok is False
     assert result.error == "execute requires a plan"
+
+
+def test_discover_lists_every_node_card(sample_project) -> None:
+    result = discover(
+        WorkerRequest(mode="discover", flow_file=str(sample_project.flow))
+    )
+
+    assert result.ok, result.error
+    assert result.mode == "discover"
+    cards = {card.name: card for card in result.nodes}
+    assert set(cards) == {"double", "root", "scale"}
+
+    assert cards["double"].summary == "Double one value."
+    assert cards["double"].signature == "(x: int) -> int"
+    assert cards["scale"].summary == ""
+    assert cards["scale"].signature == "(value: int, factor: int = 1) -> int"
+    assert cards["root"].signature == "(n: int = 2, factor: int = 3) -> list"
+
+
+def test_discover_reports_root_parameter_specs(sample_project) -> None:
+    result = discover(
+        WorkerRequest(mode="discover", flow_file=str(sample_project.flow))
+    )
+
+    assert result.ok, result.error
+    cards = {card.name: card for card in result.nodes}
+    root = [(p.name, p.type, p.required, p.default) for p in cards["root"].params]
+    assert root == [("n", "int", False, 2), ("factor", "int", False, 3)]
+    scale = [(p.name, p.type, p.required, p.default) for p in cards["scale"].params]
+    assert scale == [("value", "int", True, None), ("factor", "int", False, 1)]
+    assert all(p.default_note is None for p in cards["root"].params)
+
+
+def test_discover_reports_a_required_path_parameter(sample_project) -> None:
+    result = discover(
+        WorkerRequest(
+            mode="discover",
+            flow_file=str(sample_project.required),
+        )
+    )
+
+    assert result.ok, result.error
+    (card,) = result.nodes
+    assert card.name == "needs_input"
+    assert card.signature == "(cases_dir: Path) -> str"
+    (param,) = card.params
+    assert param.name == "cases_dir"
+    assert param.type == "Path"
+    assert param.required is True
+    assert param.default is None
+    assert param.default_note is None
+
+
+def test_discover_rejects_a_non_python_file(sample_project) -> None:
+    notes = sample_project.root / "notes.txt"
+    notes.write_text("not a flow\n", encoding="utf-8")
+
+    result = discover(WorkerRequest(mode="discover", flow_file=str(notes)))
+
+    assert result.ok is False
+    assert result.mode == "discover"
+    assert ".py" in (result.error or "")
 
 
 def test_execute_round_trips_the_plan_document(sample_project, sample_plan) -> None:
