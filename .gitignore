@@ -8,3 +8,7 @@ sessions/
 .seq_ext_gui/
 _out/
 *.egg-info/
+
+
+
+.seq_ext_gui/

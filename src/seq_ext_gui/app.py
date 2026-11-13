@@ -73,6 +73,13 @@ def create_app(
 
     app = FastAPI(title="sequence_extensions GUI", version=__version__)
 
+    @app.middleware("http")
+    async def _no_cache_static(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers.update(NO_CACHE_HEADERS)
+        return response
+
     @app.exception_handler(ValueError)
     async def _value_error(_request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=400)

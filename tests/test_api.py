@@ -133,6 +133,13 @@ def test_health(client: TestClient, sample_project) -> None:
     assert body["project_root"] == str(sample_project.root)
 
 
+def test_static_assets_are_not_cached(client: TestClient) -> None:
+    for name in ("app.js", "graph.js", "styles.css"):
+        response = client.get(f"/static/{name}")
+        assert response.status_code == 200
+        assert "no-store" in response.headers["cache-control"]
+
+
 def test_tree(client: TestClient) -> None:
     response = client.get("/api/tree")
     assert response.status_code == 200
