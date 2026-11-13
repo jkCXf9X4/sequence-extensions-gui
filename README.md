@@ -36,9 +36,9 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 # open http://127.0.0.1:8765
 ```
 
-Pick `flows.py` and its `plan.json` in the left panel (clicking the JSON imports
-it), press **Evaluate**, click a node, edit a parameter or policy that the flow
-leaves unset, press **Execute**. A flow with required root inputs needs its plan
+Pick `flows.py` and its `plan.json` in the left panel's file tree (expand folders
+as needed; clicking the JSON imports it), press **Evaluate**, click a node, edit
+a parameter or policy that the flow leaves unset, press **Execute**. A flow with required root inputs needs its plan
 imported first; Evaluate alone cannot invent those values. Use **Export plan**
 (in the graph toolbar) to download the current document as `plan.json`.
 

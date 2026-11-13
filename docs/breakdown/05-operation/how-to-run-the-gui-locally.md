@@ -15,5 +15,5 @@ Start the GUI with one command, open `http://127.0.0.1:8765`, choose `flows.py` 
 - **Run:** `seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner` with the venv active.
 - **URL:** `http://127.0.0.1:8765` by default; `--host` and `--port` change it (`INFO-015`).
 - **Root:** the **Project root** field opens another directory; a running job must finish first (`CP-009`).
-- **Select:** pick `flows.py` then `plan.json`; clicking the JSON imports it and selects the flow the plan was built from, and Evaluate fills the graph. A flow with required root inputs needs that import first.
+- **Select:** expand directories in the project file tree, then pick `flows.py` and `plan.json`; clicking the JSON imports it and selects the flow the plan was built from, and Evaluate fills the graph. A flow with required root inputs needs that import first.
 - **Inspect:** click a node to edit an unbound parameter, press Execute, and read the streamed log.

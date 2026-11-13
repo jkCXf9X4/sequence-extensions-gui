@@ -158,15 +158,20 @@ The stream closes after `done`. Late subscribers get the current status first.
 
 Two vertical panels, per the product request:
 
-- Left: project-root field with **Open**, project file browser (`.py`/`.json`) where
-  the selected flow file is marked, plan option fields, and **Evaluate**. **Import plan**,
-  **Export plan** and the plan status sit in the graph toolbar, with the import file input.
+- Left: project-root field with **Open**, a nested project file tree (`.py`/`.json`)
+  where directories expand in place (children fetched lazily per directory and
+  cached) and the selected flow file stays marked, plan option fields, and
+  **Evaluate**. **Import plan**, **Export plan** and the plan status sit in the
+  graph toolbar, with the import file input.
 - Right: SVG DAG (oriented top-to-bottom, layered by longest path), node click
   selects it and opens the parameter and policy editor in a side column,
   **Execute** button, live run log, result banner.
 
-Clicking a `.json` file in the browser imports it; clicking a `.py` file selects
-the workflow. Import requires `schema === "flow-plan/2"` and runs Evaluate so
+Clicking a `.json` file in the tree imports it; clicking a `.py` file selects
+the workflow. Expanding a directory fetches only that level. The single
+**Open**/**Refresh** button beside the root field opens a typed root or, when
+the path is unchanged, re-fetches the root and every expanded directory while
+preserving the expanded set. Import requires `schema === "flow-plan/2"` and runs Evaluate so
 the engine validates and refreshes the document against the selected workflow;
 with no flow selected the UI shows a clear message. Export downloads
 `planDocument(state.plan)` as `plan.json`.

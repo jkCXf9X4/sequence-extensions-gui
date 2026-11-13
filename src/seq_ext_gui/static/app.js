@@ -16,10 +16,9 @@ const ui = {
   projectRoot: $("project-root"),
   openRoot: $("open-root"),
   rootStatus: $("root-status"),
-  crumbs: $("crumbs"),
   fileList: $("file-list"),
   nodeInventory: $("node-inventory"),
-  refreshTree: $("refresh-tree"),
+
   planStatus: $("plan-status"),
   importPlan: $("import-plan"),
   exportPlan: $("export-plan"),
@@ -61,8 +60,10 @@ const OPTION_DEFAULTS = {
 
 const state = {
   projectRoot: "",
-  dir: "",
-  entries: [],
+  children: new Map(),
+  expanded: new Set(),
+  pending: new Set(),
+  errors: new Map(),
   flowFile: null,
   flowName: null,
   nodes: [],
@@ -78,6 +79,7 @@ const state = {
 let widgetSeq = 0;
 let nodeInventoryToken = 0;
 let inventoryReady = Promise.resolve();
+let treeToken = 0;
 
 function nextId(prefix) {
   widgetSeq += 1;
@@ -136,20 +138,160 @@ async function boot() {
     ui.health.textContent = `backend unreachable: ${error.message}`;
     ui.health.classList.add("bad");
   }
-  await loadTree("");
+  syncRootButton();
+  await refreshTree();
 }
 
-async function loadTree(path) {
-  try {
-    const data = await api(`/api/tree?path=${encodeURIComponent(path || "")}`);
-    state.dir = data.path || "";
-    state.entries = Array.isArray(data.entries) ? data.entries : [];
-    renderCrumbs(state.dir);
-    renderFiles(state.entries);
-  } catch (error) {
-    state.entries = [];
-    renderCrumbs(state.dir);
-    ui.fileList.replaceChildren(message(`Cannot list files: ${error.message}`, "error"));
+// ---------------------------------------------------------- project files ----
+
+async function fetchDir(path, token) {
+  if (state.children.has(path)) return state.children.get(path);
+  const data = await api(`/api/tree?path=${encodeURIComponent(path)}`);
+  if (token !== treeToken) return null;
+  const entries = Array.isArray(data?.entries) ? data.entries : [];
+  state.children.set(path, entries);
+  return entries;
+}
+
+async function toggleDir(path) {
+  if (state.expanded.has(path)) {
+    state.expanded.delete(path);
+    renderTree();
+    focusPath(path);
+    return;
+  }
+  state.expanded.add(path);
+  state.errors.delete(path);
+  if (!state.children.has(path)) {
+    const token = treeToken;
+    state.pending.add(path);
+    renderTree();
+    try {
+      await fetchDir(path, token);
+    } catch (error) {
+      if (token === treeToken) {
+        state.errors.set(path, error.message);
+      }
+    } finally {
+      if (token === treeToken) state.pending.delete(path);
+    }
+    if (token !== treeToken) return;
+  }
+  renderTree();
+  focusPath(path);
+}
+
+async function refreshTree() {
+  const token = ++treeToken;
+  const dirs = ["", ...state.expanded];
+  const results = await Promise.all(
+    dirs.map(async (path) => {
+      try {
+        const data = await api(`/api/tree?path=${encodeURIComponent(path)}`);
+        return { path, entries: Array.isArray(data?.entries) ? data.entries : [] };
+      } catch (error) {
+        return { path, error };
+      }
+    }),
+  );
+  if (token !== treeToken) return;
+  for (const result of results) {
+    state.pending.delete(result.path);
+    if (result.error) {
+      state.errors.set(result.path, result.error.message);
+      if (!result.path) state.children.delete("");
+    } else {
+      state.errors.delete(result.path);
+      state.children.set(result.path, result.entries);
+    }
+  }
+  renderTree();
+}
+
+function resetTree() {
+  treeToken += 1;
+  state.children.clear();
+  state.expanded.clear();
+  state.pending.clear();
+  state.errors.clear();
+  ui.fileList.replaceChildren();
+}
+
+function renderTree() {
+  ui.fileList.replaceChildren();
+  const entries = state.children.get("");
+  if (entries === undefined) {
+    const error = state.errors.get("");
+    ui.fileList.append(message(`Cannot list files: ${error || "unknown error"}`, "error"));
+    return;
+  }
+  if (!entries.length) {
+    ui.fileList.append(message("No .py or .json files here.", "empty"));
+    return;
+  }
+  appendEntries(entries, 0);
+}
+
+function appendEntries(entries, depth) {
+  for (const entry of entries) {
+    const isDir = entry.kind === "dir";
+    const selected = !isDir && entry.path === state.flowFile;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "file-entry";
+    button.dataset.path = entry.path;
+    button.dataset.kind = entry.kind;
+    button.setAttribute("role", "treeitem");
+    button.setAttribute("aria-level", String(depth + 1));
+    button.style.paddingLeft = `${6 + 12 * depth}px`;
+    if (isDir) {
+      const open = state.expanded.has(entry.path);
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+    } else {
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+      if (selected) button.classList.add("selected");
+    }
+    const glyph = document.createElement("span");
+    glyph.className = "glyph";
+    glyph.textContent = isDir ? (state.expanded.has(entry.path) ? "▾" : "▸") : "·";
+    const name = document.createElement("span");
+    name.textContent = entry.name;
+    button.append(glyph, name);
+    ui.fileList.append(button);
+
+    if (!isDir || !state.expanded.has(entry.path)) continue;
+    if (state.pending.has(entry.path)) {
+      ui.fileList.append(treeNote("loading…", depth + 1, "tree-note muted"));
+      continue;
+    }
+    const error = state.errors.get(entry.path);
+    if (error) {
+      ui.fileList.append(treeNote(`Cannot list: ${error}`, depth + 1, "tree-error"));
+      continue;
+    }
+    const children = state.children.get(entry.path);
+    if (children === undefined) {
+      ui.fileList.append(treeNote("Not loaded.", depth + 1, "tree-note muted"));
+    } else if (!children.length) {
+      ui.fileList.append(treeNote("No .py or .json files here.", depth + 1, "tree-note empty"));
+    } else {
+      appendEntries(children, depth + 1);
+    }
+  }
+}
+
+function treeNote(text, depth, className) {
+  const node = message(text, className);
+  node.style.paddingLeft = `${24 + 12 * depth}px`;
+  return node;
+}
+
+function focusPath(path) {
+  for (const button of ui.fileList.querySelectorAll("button[data-path]")) {
+    if (button.dataset.path === path) {
+      button.focus();
+      return;
+    }
   }
 }
 
@@ -185,6 +327,21 @@ function unlockRootAfterRun() {
   }
 }
 
+function normalizedRoot(value) {
+  return String(value ?? "").trim().replace(/\/+$/, "");
+}
+
+// One button opens a typed root and reloads the tree when the path is unchanged.
+function syncRootButton() {
+  const same =
+    normalizedRoot(state.projectRoot) !== "" &&
+    normalizedRoot(ui.projectRoot.value) === normalizedRoot(state.projectRoot);
+  ui.openRoot.textContent = same ? "Refresh" : "Open";
+  ui.openRoot.title = same
+    ? "Reload the project file tree"
+    : "Open this project root";
+}
+
 async function switchRoot() {
   if (runActive()) {
     setRootStatus("cancel or wait for the run to finish", "error");
@@ -195,6 +352,12 @@ async function switchRoot() {
     setRootStatus("enter an absolute path", "error");
     return;
   }
+  if (normalizedRoot(path) === normalizedRoot(state.projectRoot)) {
+    setRootStatus("refreshing…");
+    await refreshTree();
+    setRootStatus("project files refreshed", "ok");
+    return;
+  }
 
   setRootBusy(true);
   setRootStatus("switching…");
@@ -203,11 +366,12 @@ async function switchRoot() {
     const root = health?.project_root || path;
     state.projectRoot = root;
     ui.projectRoot.value = root;
+    syncRootButton();
     ui.health.textContent = `ok · v${health?.version ?? "?"} · ${root}`;
     ui.health.classList.remove("bad");
     resetForRoot();
     setRootStatus("project root updated", "ok");
-    await loadTree("");
+    await refreshTree();
   } catch (error) {
     setRootStatus(`switch failed: ${error.message}`, "error");
   } finally {
@@ -216,7 +380,7 @@ async function switchRoot() {
 }
 
 function resetForRoot() {
-  state.dir = "";
+  resetTree();
   state.flowFile = null;
   state.flowName = null;
   state.selectedId = null;
@@ -231,56 +395,6 @@ function resetForRoot() {
   setJobStatus("idle");
   hideEvalError();
   renderWarnings([]);
-}
-
-function renderCrumbs(path) {
-  ui.crumbs.replaceChildren();
-  const root = document.createElement("button");
-  root.type = "button";
-  root.textContent = "root";
-  root.dataset.path = "";
-  ui.crumbs.append(root);
-
-  let accumulated = "";
-  for (const part of String(path || "").split("/").filter(Boolean)) {
-    accumulated = accumulated ? `${accumulated}/${part}` : part;
-    const separator = document.createElement("span");
-    separator.textContent = "/";
-    ui.crumbs.append(separator);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = part;
-    button.dataset.path = accumulated;
-    ui.crumbs.append(button);
-  }
-}
-
-function renderFiles(entries) {
-  ui.fileList.replaceChildren();
-  if (!entries.length) {
-    ui.fileList.append(message("No .py or .json files here.", "empty"));
-    return;
-  }
-  for (const entry of entries) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "file-entry";
-    button.dataset.path = entry.path;
-    button.dataset.kind = entry.kind;
-    button.setAttribute("role", "option");
-    const selected = entry.path === state.flowFile;
-    button.setAttribute("aria-selected", selected ? "true" : "false");
-    if (selected) {
-      button.classList.add("selected");
-    }
-    const glyph = document.createElement("span");
-    glyph.className = "glyph";
-    glyph.textContent = entry.kind === "dir" ? "▸" : "·";
-    const name = document.createElement("span");
-    name.textContent = entry.name;
-    button.append(glyph, name);
-    ui.fileList.append(button);
-  }
 }
 
 function message(text, className) {
@@ -302,7 +416,7 @@ async function selectFile(path) {
       renderWarnings([]);
       clearPlan();
     }
-    renderFiles(state.entries);
+    renderTree();
     await loadNodeInventory(path);
     return;
   }
@@ -1460,21 +1574,19 @@ ui.fileList.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-path]");
   if (!button) return;
   const path = button.dataset.path;
-  if (button.dataset.kind === "dir") loadTree(path);
-  else {
+  if (button.dataset.kind === "dir") {
+    toggleDir(path).catch((error) =>
+      showEvalError(`Cannot list ${path}: ${error.message}`),
+    );
+  } else {
     selectFile(path).catch((error) =>
       showEvalError(`Cannot open ${path}: ${error.message}`),
     );
   }
 });
 
-ui.crumbs.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-path]");
-  if (button) loadTree(button.dataset.path);
-});
-
-ui.refreshTree.addEventListener("click", () => loadTree(state.dir));
 ui.openRoot.addEventListener("click", switchRoot);
+ui.projectRoot.addEventListener("input", syncRootButton);
 ui.projectRoot.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();

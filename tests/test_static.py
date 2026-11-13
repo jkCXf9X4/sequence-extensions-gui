@@ -298,6 +298,50 @@ def test_file_browser_routes_py_and_json() -> None:
     assert "await importPlanText(" in source
 
 
+def test_file_browser_is_a_lazy_tree() -> None:
+    html = read("index.html")
+    source = read("app.js")
+    css = read("styles.css")
+
+    assert 'id="file-list"' in html, "missing tree control #file-list"
+    assert 'id="refresh-tree"' not in html, "tree refresh is merged into #open-root"
+    assert "function syncRootButton" in source
+    assert '"Refresh"' in source and '"Open"' in source
+    assert 'id="crumbs"' not in html, "breadcrumb nav must be gone"
+    assert "crumbs" not in source, "breadcrumb renderer must be gone"
+    assert re.search(r'id="file-list"[^>]*role="tree"', html), "#file-list must be a tree"
+
+    assert re.search(r'setAttribute\("role", "treeitem"\)', source)
+    assert re.search(r"setAttribute\(\"aria-expanded\"", source)
+    assert re.search(r"setAttribute\(\"aria-level\"", source)
+    assert "state.expanded" in source
+    assert "children: new Map()" in source
+    assert "function fetchDir" in source
+    assert "function toggleDir" in source
+    assert "function renderTree" in source
+    assert "function refreshTree" in source
+    assert "function appendEntries" in source
+    assert "loadTree(" not in source, "the flat loader must be replaced"
+    assert "No .py or .json files here." in source
+
+    toggle = function_body(source, "toggleDir")
+    assert "state.expanded.has(path)" in toggle
+    assert "fetchDir(" in toggle
+    assert "renderTree()" in toggle
+
+    refresh = function_body(source, "refreshTree")
+    assert "state.expanded" in refresh, "refresh must keep the expanded set"
+    assert "Promise.all" in refresh
+    assert "renderTree()" in refresh
+
+    click = source[source.index('ui.fileList.addEventListener("click"') :]
+    assert "toggleDir(path)" in click
+    assert "loadTree(" not in click
+
+    assert re.search(r"\.file-list\s*\{[^}]*max-height:\s*320px", css, re.DOTALL)
+    assert ".crumbs" not in css
+
+
 def test_node_inventory_discovery() -> None:
     html = read("index.html")
     source = read("app.js")
