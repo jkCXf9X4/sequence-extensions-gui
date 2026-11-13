@@ -20,7 +20,6 @@ const ui = {
   fileList: $("file-list"),
   nodeInventory: $("node-inventory"),
   refreshTree: $("refresh-tree"),
-  flowFile: $("flow-file"),
   planStatus: $("plan-status"),
   importPlan: $("import-plan"),
   exportPlan: $("export-plan"),
@@ -78,6 +77,7 @@ const state = {
 
 let widgetSeq = 0;
 let nodeInventoryToken = 0;
+let inventoryReady = Promise.resolve();
 
 function nextId(prefix) {
   widgetSeq += 1;
@@ -222,7 +222,6 @@ function resetForRoot() {
   state.selectedId = null;
   state.nodes = [];
   nodeInventoryToken += 1;
-  ui.flowFile.textContent = "none";
   renderNodeCards("Select a .py file to list nodes.");
   ui.planFile.value = "";
   clearPlan();
@@ -299,7 +298,6 @@ async function selectFile(path) {
     if (state.flowFile !== path) {
       state.flowFile = path;
       state.flowName = null;
-      ui.flowFile.textContent = path;
       hideEvalError();
       renderWarnings([]);
       clearPlan();
@@ -354,12 +352,54 @@ function syncNodeSelection() {
   }
 }
 
+// A plan never lists the root as a child, so the flow it was built from is
+// normally the one discovered node the plan does not mention. Fall back to
+// the first segment of the node paths (which is the root name too) when the
+// module leaves more than one flow unused. Both guesses are accepted only
+// when they name exactly one flow the selected module declares.
+function planFlowName(plan) {
+  const known = new Set(
+    (Array.isArray(state.nodes) ? state.nodes : []).map((node) => String(node?.name ?? "")),
+  );
+  const entries = Array.isArray(plan?.nodes) ? plan.nodes : [];
+  const used = new Set();
+  for (const node of entries) {
+    const name = String(node?.name ?? "");
+    if (!name || (node?.kind ?? "node") === "gather") continue;
+    if (!known.has(name)) return null;
+    used.add(name);
+  }
+  const unused = [...known].filter((name) => name && !used.has(name));
+  if (unused.length === 1) return unused[0];
+
+  const roots = new Set();
+  for (const node of entries) {
+    const path = Array.isArray(node?.path) ? node.path : [];
+    const root = path.length ? String(path[0] ?? "") : "";
+    if (root && known.has(root)) roots.add(root);
+  }
+  if (roots.size !== 1) return null;
+  const [root] = roots;
+  return root;
+}
+
+function flowSelectionError() {
+  if (state.flowName) return null;
+  const count = Array.isArray(state.nodes) ? state.nodes.length : 0;
+  return count > 1 ? `Select a flow node first (${count} available).` : "Select a flow node first.";
+}
+
 // ---------------------------------------------------------- node inventory ----
 
 async function loadNodeInventory(path) {
   const token = ++nodeInventoryToken;
   state.nodes = [];
   renderNodeCards("Loading nodes…");
+  inventoryReady = discoverNodes(path, token);
+  await inventoryReady;
+}
+
+async function discoverNodes(path, token) {
   try {
     const data = await postJson("/api/discover", { flow_file: path });
     if (token !== nodeInventoryToken) return;
@@ -557,6 +597,16 @@ async function importPlanText(text, label) {
     showEvalError(`Cannot import ${label}: schema must be "${PLAN_SCHEMA}".`);
     return;
   }
+  // Discovery may still be running; wait so the plan's root can be matched
+  // against the module's node names before the plan replaces the view.
+  await inventoryReady;
+  if (!state.flowName) {
+    const inferred = planFlowName(document);
+    if (inferred) {
+      state.flowName = inferred;
+      syncNodeSelection();
+    }
+  }
   applyPlan(document);
   markDirty();
   if (!state.flowFile) {
@@ -617,8 +667,9 @@ async function evaluate() {
     showEvalError("Select a .py flow file first.");
     return;
   }
-  if (!state.flowName) {
-    showEvalError("Select a node first.");
+  const selectionError = flowSelectionError();
+  if (selectionError) {
+    showEvalError(selectionError);
     return;
   }
   hideEvalError();
@@ -1150,6 +1201,11 @@ async function execute() {
   }
   if (!state.plan) {
     showEvalError("Evaluate the flow before executing.");
+    return;
+  }
+  const selectionError = flowSelectionError();
+  if (selectionError) {
+    showEvalError(selectionError);
     return;
   }
   hideEvalError();

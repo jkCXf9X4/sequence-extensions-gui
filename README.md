@@ -40,7 +40,7 @@ Pick `flows.py` and its `plan.json` in the left panel (clicking the JSON imports
 it), press **Evaluate**, click a node, edit a parameter or policy that the flow
 leaves unset, press **Execute**. A flow with required root inputs needs its plan
 imported first; Evaluate alone cannot invent those values. Use **Export plan**
-to download the current document as `plan.json`.
+(in the graph toolbar) to download the current document as `plan.json`.
 
 Options: `--host`, `--port`, `--project-root`; `SEQ_EXT_GUI_PROJECT_ROOT` is the
 environment fallback. The **Project root** field switches directories without a
@@ -55,7 +55,7 @@ restart; a running job must finish first.
   `options`; the log directory stays per run and is not part of the document.
 - **Per-node policy** is supported upstream: edits go into
   `plan.nodes[].policy` and reach the engine as `RunOptions.node_policies`.
-- **Flow selection is external**: the dropdown chooses the root node and is
+- **Flow selection is external**: the node list chooses the root node and is
   never written into the plan.
 - Edits target the selected node occurrence: repeated nodes are labeled and
   edited by identity (`name #instance`). Name-wide overrides remain an engine

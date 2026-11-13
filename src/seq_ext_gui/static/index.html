@@ -38,28 +38,6 @@
       </div>
 
       <div class="section">
-        <h2>Selection</h2>
-        <div class="field">
-          <span class="field-label">Flow file</span>
-          <output id="flow-file" class="path">none</output>
-        </div>
-      </div>
-
-      <div class="section">
-        <div class="section-head">
-          <h2>Plan</h2>
-          <span id="plan-status" class="muted">none</span>
-        </div>
-        <div class="plan-actions">
-          <button type="button" id="import-plan">Import plan</button>
-          <button type="button" id="export-plan" class="small" disabled>Export plan</button>
-        </div>
-        <input id="plan-file" type="file" accept=".json,application/json"
-               class="hidden" aria-label="Import plan JSON">
-        <p class="muted">flow-plan/2 JSON · import or export the whole plan; fill required inputs in the node editor, then Evaluate to build the full graph</p>
-      </div>
-
-      <div class="section">
         <h2>Run options</h2>
         <div class="opts-grid">
           <label for="opt-max-workers">max workers</label>
@@ -95,6 +73,11 @@
         <div class="toolbar">
           <h2>Dependency graph</h2>
           <span id="dirty-hint" class="hint hidden">plan dirty — re-evaluate to refresh</span>
+          <button type="button" id="import-plan" class="small">Import plan</button>
+          <button type="button" id="export-plan" class="small" disabled>Export plan</button>
+          <span id="plan-status" class="muted">none</span>
+          <input id="plan-file" type="file" accept=".json,application/json"
+                 class="hidden" aria-label="Import plan JSON">
           <div class="spacer"></div>
           <button type="button" id="fit-graph" class="small">Fit</button>
           <button type="button" id="execute" class="primary" disabled>Execute</button>

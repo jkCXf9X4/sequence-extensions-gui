@@ -9,7 +9,7 @@ status: current
 
 # Choose which flow to run
 
-When a module holds several flows the operator picks the target in a dropdown; when exactly one node exists, it is used without a choice. Selection is external to the plan.
+When a module holds several flows the operator picks the target from the node list after clicking the module in the project file list; when exactly one node exists, it is used without a choice. Selection is external to the plan.
 
 - **Request:** "run the flow I mean from this module, or use its only node."
 - **Goal:** no doubt about which flow the preview describes.

@@ -129,13 +129,131 @@ def test_execute_payload_and_endpoints() -> None:
     assert "content: state.configText" not in source
 
 
+def test_plan_import_recovers_the_flow_root(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    source = read("app.js")
+    body = function_body(source, "planFlowName")
+
+    import_body = function_body(source, "importPlanText")
+    assert "await inventoryReady" in import_body, "import must wait for discovery"
+    assert "planFlowName(document)" in import_body, "import must recover the plan root"
+    assert import_body.index("planFlowName(document)") < import_body.index(
+        "applyPlan(document)"
+    ), "the root must be known before the plan is applied"
+
+    script = tmp_path / "plan_root.mjs"
+    script.write_text(
+        "const state = { nodes: [], flowName: null };\n"
+        "function planFlowName(plan) {\n"
+        + body
+        + "\n}\n"
+        + """
+function check(actual, expected, message) {
+  if (actual !== expected) throw new Error(`${message}: ${actual}`);
+}
+const plan = {
+  nodes: [
+    { name: "prepare_data", path: ["pipeline", "prepare_data"] },
+    { name: "simulate", path: ["pipeline", "simulate"] },
+  ],
+};
+state.nodes = [{ name: "pipeline" }, { name: "prepare_data" }, { name: "simulate" }];
+check(planFlowName(plan), "pipeline", "root recovered from unused flow names");
+state.nodes = [{ name: "simulate" }, { name: "postprocess" }];
+check(planFlowName(plan), null, "foreign plan node rejected");
+state.nodes = [{ name: "pipeline" }];
+check(
+  planFlowName({
+    nodes: [
+      { name: "pipeline", path: ["a", "x"] },
+      { name: "pipeline", path: ["b", "y"] },
+    ],
+  }),
+  null,
+  "ambiguous roots rejected",
+);
+state.nodes = [{ name: "pipeline" }, { name: "other" }];
+check(planFlowName({ nodes: [] }), null, "rootless plan stays ambiguous");
+
+state.nodes = [
+  { name: "campaign" },
+  { name: "evaluate" },
+  { name: "simulate" },
+  { name: "summarize" },
+];
+const gather_plan = {
+  nodes: [
+    { name: "simulate", path: ["campaign", "simulate"] },
+    { name: "evaluate", path: ["campaign", "evaluate"] },
+    { name: "gather", kind: "gather", path: ["gather"] },
+    { name: "summarize", path: ["campaign", "summarize"] },
+  ],
+};
+check(planFlowName(gather_plan), "campaign", "engine gather node is not a root");
+state.nodes = [
+  { name: "campaign" },
+  { name: "report" },
+  { name: "evaluate" },
+  { name: "simulate" },
+  { name: "summarize" },
+];
+check(planFlowName(gather_plan), "campaign", "path fallback when two flows are unused");
+""",
+        encoding="utf-8",
+    )
+    proc = subprocess.run([node, str(script)], capture_output=True, text=True)
+    assert proc.returncode == 0, f"plan root recovery test failed:\n{proc.stderr}"
+
+
+def test_execute_requires_a_selected_flow(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    source = read("app.js")
+    assert "flowSelectionError()" in function_body(source, "evaluate")
+    assert "flowSelectionError()" in function_body(source, "execute"), (
+        "execute must refuse a run without a flow instead of failing in the worker"
+    )
+
+    script = tmp_path / "flow_guard.mjs"
+    script.write_text(
+        "const state = { nodes: [], flowName: null };\n"
+        "function flowSelectionError() {\n"
+        + function_body(source, "flowSelectionError")
+        + "\n}\n"
+        + """
+function check(actual, expected, message) {
+  if (actual !== expected) throw new Error(`${message}: ${actual}`);
+}
+check(flowSelectionError() !== null, true, "no flow is rejected");
+state.nodes = [{ name: "a" }, { name: "b" }];
+check(flowSelectionError(), "Select a flow node first (2 available).", "count is reported");
+state.flowName = "a";
+check(flowSelectionError(), null, "selected flow passes");
+""",
+        encoding="utf-8",
+    )
+    proc = subprocess.run([node, str(script)], capture_output=True, text=True)
+    assert proc.returncode == 0, f"flow selection guard test failed:\n{proc.stderr}"
+
+
 def test_plan_import_export_controls() -> None:
     html = read("index.html")
     source = read("app.js")
+    toolbar = html[html.index('id="dirty-hint"') : html.index('id="cancel"')]
     for element_id in ("import-plan", "export-plan", "plan-file", "plan-status"):
-        assert f'id="{element_id}"' in html, f"missing plan control #{element_id}"
+        assert f'id="{element_id}"' in toolbar, (
+            f"#{element_id} must sit in the graph toolbar"
+        )
     assert 'accept=".json,application/json"' in html
     assert 'type="file"' in html
+
+    assert 'id="flow-file"' not in html
+    assert "Flow file" not in html
+    assert "<h2>Plan</h2>" not in html
+    assert "plan-actions" not in html
 
     assert "function importPlanText" in source
     assert "document.schema !== PLAN_SCHEMA" in source

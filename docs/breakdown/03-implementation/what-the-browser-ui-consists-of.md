@@ -13,8 +13,8 @@ The UI is four static files of vanilla JavaScript and CSS, loaded directly with 
 
 - **Files:** `index.html`, `app.js`, `graph.js`, `styles.css`; `app.js` imports `graph.js` as an ES module.
 - **Project root:** a text field and **Open** button call `PUT /api/root`, clear the old selection, and reload the tree (`CP-009`).
-- **Plan panel:** **Import plan** reads a `.json` file and **Export plan** downloads the current document; options, root inputs, node parameters, and node policy are bound to `state.plan` (`INFO-013`).
+- **Graph toolbar:** **Import plan** reads a `.json` file, **Export plan** downloads the current document, and the plan status sits beside them. Options, root inputs, node parameters, and node policy are bound to `state.plan` (`INFO-013`).
 - **Graph:** `graph.js` renders the SVG DAG and reports selection through `data-node-id`.
-- **Parameters:** type-driven widgets — checkbox, number, text, JSON textarea; read-only ones are disabled with a note. A flow dropdown selects the root; the plan never stores it.
+- **Parameters:** type-driven widgets — checkbox, number, text, JSON textarea; read-only ones are disabled with a note. A node list selects the root; the plan never stores it.
 - **Stream:** an `EventSource` appends `log` records and shows `status` and `done`.
 - **Safety:** engine text reaches the DOM through `textContent`; no `innerHTML`, no CDN.

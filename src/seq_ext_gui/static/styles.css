@@ -168,6 +168,7 @@ input:disabled, select:disabled, textarea:disabled {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
+  flex-wrap: wrap;
 }
 
 .toolbar .spacer, .section-head .spacer { flex: 1; }
@@ -320,12 +321,6 @@ input:disabled, select:disabled, textarea:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.plan-actions {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
 }
 
 .root-row {

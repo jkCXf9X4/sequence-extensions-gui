@@ -158,9 +158,9 @@ The stream closes after `done`. Late subscribers get the current status first.
 
 Two vertical panels, per the product request:
 
-- Left: project-root field with **Open**, project file browser (`.py`/`.json`),
-  flow-file display and flow-name dropdown, plan panel with **Import plan**/**Export plan**, plan option fields,
-  **Evaluate** button.
+- Left: project-root field with **Open**, project file browser (`.py`/`.json`) where
+  the selected flow file is marked, plan option fields, and **Evaluate**. **Import plan**,
+  **Export plan** and the plan status sit in the graph toolbar, with the import file input.
 - Right: SVG DAG (oriented top-to-bottom, layered by longest path), node click
   selects it and opens the parameter and policy editor in a side column,
   **Execute** button, live run log, result banner.
