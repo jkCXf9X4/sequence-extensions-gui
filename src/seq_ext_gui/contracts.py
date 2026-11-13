@@ -2,49 +2,103 @@
 
 Everything that crosses a process boundary is defined here exactly once.  The
 configuration artifact is the engine's ``flow-plan/2`` JSON document: the GUI
-imports and exports it, and the worker consumes it verbatim.
+imports and exports it as plain dicts, and the worker consumes it verbatim.
+The engine's JSON Schema, not a Python mirror, defines its shape.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import stat
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .schema import option_defaults, policy_defaults
 
 PLAN_SCHEMA = "flow-plan/2"
 
-
-class Policy(BaseModel):
-    """Effective node policy as reported by the plan document."""
-
-    retries: int = 0
-    retry_delay_seconds: float = 0.0
-    timeout: float | None = None
+#: Keys the GUI adds to engine parameters for presentation only.
+GUI_PARAM_KEYS = frozenset({"editable", "note"})
 
 
-class PlanOptions(BaseModel):
-    """The six run options a ``flow-plan/2`` document carries."""
+def annotate_param(
+    param: dict[str, Any], *, editable: bool = True, note: str | None = None
+) -> dict[str, Any]:
+    """Return *param* plus the GUI's display-only annotations."""
+    annotated = dict(param)
+    annotated["editable"] = bool(editable)
+    annotated["note"] = note
+    return annotated
 
-    max_workers: int = 16
-    summary: bool = False
-    fixed_clock: bool = False
-    retries: int = 0
-    retry_delay_seconds: float = 0.0
-    timeout: float | None = None
+
+def to_document(plan_dict: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of *plan_dict* with GUI-only annotations stripped."""
+    document = copy.deepcopy(plan_dict)
+    document["parameters"] = [
+        _strip_param(param) for param in document.get("parameters", ())
+    ]
+    document["nodes"] = [
+        {**node, "params": [_strip_param(param) for param in node.get("params", ())]}
+        for node in document.get("nodes", ())
+    ]
+    return document
 
 
-class Param(BaseModel):
-    name: str
-    type: str = ""
-    required: bool = False
-    default: Any = None
-    value: Any = None
-    editable: bool = True
-    note: str | None = None
+def _strip_param(param: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in param.items() if key not in GUI_PARAM_KEYS}
+
+
+def _normalise_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Fill the defaults the old wire model supplied, keeping key order."""
+    document = copy.deepcopy(plan)
+    document.setdefault("schema", PLAN_SCHEMA)
+    document["parameters"] = [
+        _normalise_param(param) for param in document.get("parameters") or ()
+    ]
+    document["nodes"] = [_normalise_node(node) for node in document.get("nodes") or ()]
+    document["edges"] = [
+        {
+            "from": edge.get("from", edge.get("source")),
+            "to": edge.get("to", edge.get("target")),
+        }
+        for edge in document.get("edges") or ()
+    ]
+    raw_options = document.get("options") or {}
+    document["options"] = {
+        key: raw_options.get(key, default) for key, default in option_defaults().items()
+    }
+    return document
+
+
+def _normalise_param(param: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": param.get("name"),
+        "type": param.get("type", ""),
+        "required": param.get("required", False),
+        "default": param.get("default"),
+        "value": param.get("value"),
+        "editable": param.get("editable", True),
+        "note": param.get("note"),
+    }
+
+
+def _normalise_node(node: dict[str, Any]) -> dict[str, Any]:
+    raw_policy = node.get("policy") or {}
+    return {
+        "id": node.get("id"),
+        "name": node.get("name"),
+        "kind": node.get("kind", "node"),
+        "path": list(node.get("path") or ()),
+        "instance": node.get("instance", 1),
+        "policy": {
+            key: raw_policy.get(key, default) for key, default in policy_defaults().items()
+        },
+        "params": [_normalise_param(param) for param in node.get("params") or ()],
+    }
 
 
 class ParamSpec(BaseModel):
@@ -55,60 +109,6 @@ class ParamSpec(BaseModel):
     required: bool = False
     default: Any = None
     default_note: str | None = None
-
-
-class PlanNode(BaseModel):
-    id: int
-    name: str
-    kind: str = "node"
-    path: list[str] = Field(default_factory=list)
-    instance: int = 1
-    policy: Policy = Field(default_factory=Policy)
-    params: list[Param] = Field(default_factory=list)
-
-
-class PlanEdge(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    source: int = Field(alias="from")
-    target: int = Field(alias="to")
-
-
-class WirePlan(BaseModel):
-    """Plan document plus the GUI editability annotations.
-
-    ``to_document`` strips the annotations and returns the engine document the
-    GUI imports, exports, and executes.  The root node is deliberately not part
-    of the plan: flow selection lives in the GUI dropdown.
-    """
-
-    schema_name: str = Field(default=PLAN_SCHEMA, alias="schema")
-    parameters: list[Param] = Field(default_factory=list)
-    nodes: list[PlanNode] = Field(default_factory=list)
-    edges: list[PlanEdge] = Field(default_factory=list)
-    options: PlanOptions = Field(default_factory=PlanOptions)
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    def to_document(self) -> dict[str, Any]:
-        return {
-            "schema": self.schema_name,
-            "parameters": [_param_document(param) for param in self.parameters],
-            "nodes": [
-                {
-                    "id": node.id,
-                    "name": node.name,
-                    "kind": node.kind,
-                    "path": list(node.path),
-                    "instance": node.instance,
-                    "policy": node.policy.model_dump(),
-                    "params": [_param_document(param) for param in node.params],
-                }
-                for node in self.nodes
-            ],
-            "edges": [{"from": edge.source, "to": edge.target} for edge in self.edges],
-            "options": self.options.model_dump(),
-        }
 
 
 class JobRequest(BaseModel):
@@ -154,13 +154,20 @@ class WorkerResult(BaseModel):
     flow_name: str | None = None
     available_flows: list[str] = Field(default_factory=list)
     nodes: list[NodeCard] = Field(default_factory=list)
-    plan: WirePlan | None = None
+    plan: dict[str, Any] | None = None
     run: RunResult | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
     error_type: str | None = None
     traceback: str | None = None
     duration_ms: int = 0
+
+    @field_validator("plan", mode="before")
+    @classmethod
+    def _plan_is_a_mapping(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, dict):
+            raise ValueError("plan must be a JSON object")
+        return None if value is None else _normalise_plan(value)
 
 
 class JobStatus(BaseModel):
@@ -204,16 +211,6 @@ class RootRequest(BaseModel):
     """An absolute directory to make the active project root."""
 
     path: str
-
-
-def _param_document(param: Param) -> dict[str, Any]:
-    return {
-        "name": param.name,
-        "type": param.type,
-        "required": param.required,
-        "default": param.default,
-        "value": param.value,
-    }
 
 
 def _file_sha256(path: Path) -> str | None:
@@ -281,12 +278,3 @@ def decode_value(value: Any, type_hint: str) -> Any:
             raise ValueError(f"cannot read {value!r} as bool")
         return text
     return value
-
-
-def policy_from_mapping(mapping: dict[str, Any] | None) -> Policy:
-    mapping = mapping or {}
-    return Policy(
-        retries=int(mapping.get("retries") or 0),
-        retry_delay_seconds=float(mapping.get("retry_delay_seconds") or 0.0),
-        timeout=None if mapping.get("timeout") is None else float(mapping["timeout"]),
-    )

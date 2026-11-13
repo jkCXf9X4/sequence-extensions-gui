@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from seq_ext_gui.contracts import WorkerRequest, WorkerResult
+from seq_ext_gui.contracts import WorkerRequest, WorkerResult, to_document
 from seq_ext_gui.worker import _dispatch
 
 
@@ -60,14 +60,14 @@ def test_worker_cli_writes_a_parseable_result(tmp_path: Path, sample_project) ->
     assert result.ok, result.error
     assert result.mode == "plan"
     assert result.plan is not None
-    assert result.plan.schema_name == "flow-plan/2"
-    document = result.plan.to_document()
+    assert result.plan["schema"] == "flow-plan/2"
+    document = to_document(result.plan)
     assert "root" not in document
     parameters = {param["name"]: param["value"] for param in document["parameters"]}
     assert parameters["n"] == 3
     assert document["options"]["max_workers"] == 2
-    scale = next(node for node in result.plan.nodes if node.name == "scale")
-    assert scale.policy.retries == 2
+    scale = next(node for node in result.plan["nodes"] if node["name"] == "scale")
+    assert scale["policy"]["retries"] == 2
 
 
 def test_worker_cli_dispatches_discovery(tmp_path: Path, sample_project) -> None:

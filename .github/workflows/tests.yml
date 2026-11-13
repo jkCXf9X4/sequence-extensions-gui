@@ -21,7 +21,7 @@ jobs:
       - name: Checkout sequence_extensions
         run: |
           git clone --filter=blob:none https://github.com/pyssporg/sequence_extensions.git ../sequence_extensions
-          git -C ../sequence_extensions checkout ac7e0e590ed3348b5cff5a8544ba1e064610db03
+          git -C ../sequence_extensions checkout v3.1.0
 
       - uses: actions/setup-python@v5
         with:

@@ -36,19 +36,16 @@ from sequence_extensions.flow_runner import find_nodes
 from .contracts import (
     PLAN_SCHEMA,
     NodeCard,
-    Param,
     ParamSpec,
-    PlanEdge,
-    PlanNode,
-    PlanOptions,
     RunResult,
-    WirePlan,
     WorkerRequest,
     WorkerResult,
+    annotate_param,
     decode_value,
     encode_value,
-    policy_from_mapping,
+    to_document,
 )
+from .schema import is_complete_document, validate_plan
 
 
 class EngineError(ValueError):
@@ -68,6 +65,8 @@ def plan(request: WorkerRequest) -> WorkerResult:
             seed = request.plan
             if seed is not None:
                 _require_document(seed)
+                if is_complete_document(seed):
+                    validate_plan(seed)
             root_kwargs = _root_values(fn, seed)
             fresh = plan_document(fn, options=_run_options(seed), **root_kwargs)
             document = fresh
@@ -77,6 +76,7 @@ def plan(request: WorkerRequest) -> WorkerResult:
                 warnings.extend(seed_warnings)
                 if override:
                     document = apply_override(fresh, override)
+            validate_plan(document)
             wire_plan, wire_warnings = _wire_plan(fresh, values=document)
             warnings.extend(wire_warnings)
         return WorkerResult(
@@ -117,12 +117,15 @@ def execute(request: WorkerRequest) -> WorkerResult:
     try:
         if request.plan is None:
             raise EngineError("execute requires a plan")
+        document = to_document(request.plan)
+        _require_document(document)
+        validate_plan(document)
         with _working_directory(request) as flow_file:
             selected, fn, available = _load_flow(request, flow_file)
             try:
-                run = execute_plan(fn, request.plan, log=request.log_dir)
+                run = execute_plan(fn, document, log=request.log_dir)
             except Exception as exc:
-                wire_plan, warnings = _wire_plan(request.plan)
+                wire_plan, warnings = _wire_plan(document)
                 return WorkerResult(
                     ok=False,
                     mode="execute",
@@ -136,7 +139,7 @@ def execute(request: WorkerRequest) -> WorkerResult:
                     traceback=traceback.format_exc(),
                     duration_ms=_elapsed_ms(started),
                 )
-            wire_plan, warnings = _wire_plan(request.plan)
+            wire_plan, warnings = _wire_plan(document)
         return WorkerResult(
             ok=True,
             mode="execute",
@@ -242,8 +245,7 @@ def _require_document(document: dict[str, Any]) -> None:
 
 def _run_options(document: dict[str, Any] | None) -> RunOptions:
     raw = (document or {}).get("options") or {}
-    options = PlanOptions.model_validate(raw)
-    return RunOptions(**options.model_dump())
+    return RunOptions(**raw)
 
 
 def _root_values(fn: NodeFunction, document: dict[str, Any] | None) -> dict[str, Any]:
@@ -278,9 +280,6 @@ def _root_values(fn: NodeFunction, document: dict[str, Any] | None) -> dict[str,
     if missing:
         raise EngineError("missing required root parameter(s): " + ", ".join(missing))
     return values
-
-
-_POLICY_FIELDS = ("retries", "retry_delay_seconds", "timeout")
 
 
 def _override_from_seed(
@@ -353,8 +352,8 @@ def _override_from_seed(
             fresh_policy = target.get("policy") or {}
             changed_policy = {
                 field: policy[field]
-                for field in _POLICY_FIELDS
-                if field in policy and policy[field] != fresh_policy.get(field)
+                for field in fresh_policy
+                if field in policy and policy[field] != fresh_policy[field]
             }
             if changed_policy:
                 spec["policy"] = changed_policy
@@ -480,7 +479,7 @@ def _annotation_name(annotation: Any) -> str:
 # ---------------------------------------------------------------- #
 def _wire_plan(
     document: dict[str, Any], *, values: dict[str, Any] | None = None
-) -> tuple[WirePlan, list[str]]:
+) -> tuple[dict[str, Any], list[str]]:
     """Annotate ``document`` for the wire, taking values from ``values``."""
     warnings: list[str] = []
     value_document = values if values is not None else document
@@ -489,7 +488,7 @@ def _wire_plan(
     }
     value_nodes = value_document.get("nodes", ())
 
-    nodes: list[PlanNode] = []
+    nodes: list[dict[str, Any]] = []
 
     for index, entry in enumerate(document.get("nodes", ())):
         value_entry = value_nodes[index] if index < len(value_nodes) else entry
@@ -501,45 +500,50 @@ def _wire_plan(
             for raw in entry.get("params", ()):
                 params.append(_node_param(raw, value_params.get(raw["name"], raw.get("value"))))
         nodes.append(
-            PlanNode(
-                id=entry["id"],
-                name=entry["name"],
-                kind=entry.get("kind", "node"),
-                path=list(entry.get("path", ())),
-                instance=entry.get("instance", 1),
-                policy=policy_from_mapping(value_entry.get("policy")),
-                params=params,
-            )
+            {
+                "id": entry["id"],
+                "name": entry["name"],
+                "kind": entry.get("kind", "node"),
+                "path": list(entry.get("path", ())),
+                "instance": entry.get("instance", 1),
+                "policy": dict(value_entry.get("policy") or {}),
+                "params": params,
+            }
         )
 
-    wire_plan = WirePlan(
-        schema_name=value_document.get("schema", PLAN_SCHEMA),
-        parameters=[
+    wire_plan = {
+        "schema": value_document.get("schema", PLAN_SCHEMA),
+        "parameters": [
             _root_param(raw, value_parameters.get(raw["name"], raw.get("value")))
             for raw in document.get("parameters", ())
         ],
-        nodes=nodes,
-        edges=[PlanEdge.model_validate(edge) for edge in document.get("edges", ())],
-        options=PlanOptions.model_validate(value_document.get("options") or {}),
-    )
+        "nodes": nodes,
+        "edges": [
+            {"from": edge.get("from", edge.get("source")), "to": edge.get("to", edge.get("target"))}
+            for edge in document.get("edges", ())
+        ],
+        "options": dict(value_document.get("options") or {}),
+    }
     return wire_plan, warnings
 
 
-def _root_param(raw: dict[str, Any], value: Any) -> Param:
+def _root_param(raw: dict[str, Any], value: Any) -> dict[str, Any]:
     encoded, _editable, note = encode_value(value)
     default, _default_editable, _default_note = encode_value(raw.get("default"))
-    return Param(
-        name=raw["name"],
-        type=raw.get("type", ""),
-        required=bool(raw.get("required")),
-        default=default,
-        value=encoded,
+    return annotate_param(
+        {
+            "name": raw["name"],
+            "type": raw.get("type", ""),
+            "required": bool(raw.get("required")),
+            "default": default,
+            "value": encoded,
+        },
         editable=True,
         note=note,
     )
 
 
-def _node_param(raw: dict[str, Any], value: Any) -> Param:
+def _node_param(raw: dict[str, Any], value: Any) -> dict[str, Any]:
     encoded, encodable, encodable_note = encode_value(value)
     default, _default_editable, _default_note = encode_value(raw.get("default"))
     required = bool(raw.get("required"))
@@ -558,12 +562,14 @@ def _node_param(raw: dict[str, Any], value: Any) -> Param:
     else:
         editable, note = True, None
 
-    return Param(
-        name=raw["name"],
-        type=raw.get("type", ""),
-        required=required,
-        default=default,
-        value=encoded,
+    return annotate_param(
+        {
+            "name": raw["name"],
+            "type": raw.get("type", ""),
+            "required": required,
+            "default": default,
+            "value": encoded,
+        },
         editable=editable,
         note=note,
     )

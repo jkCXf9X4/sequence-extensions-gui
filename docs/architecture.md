@@ -27,18 +27,23 @@ worker.py -> engine.py -> sequence_extensions API
 
 ## Wire contract
 
-The only run configuration is the engine's `flow-plan/2` JSON document;
-`contracts.py` mirrors it so the same shape crosses every process boundary.
+The only run configuration is the engine's `flow-plan/2` JSON document. The GUI
+does not mirror that document as models. `schema.py` validates plans against the
+engine's published JSON Schema (draft 2020-12,
+`sequence_extensions/schemas/flow-plan-2.schema.json`), and the plan travels as
+a plain dict.
 
-- `Param` — `name`, `type`, `required`, `default`, `value`, `editable`, `note`.
-- `PlanNode` — `id`, `name`, `kind`, `path`, `instance`, `policy`, `params`;
-  `PlanEdge` — `from`/`to`; `Policy` — retries, backoff, timeout.
-- `PlanOptions` — the six document options with concrete defaults:
-  `max_workers=16`, `summary=False`, `fixed_clock=False`, `retries=0`,
-  `retry_delay_seconds=0.0`, `timeout=None`.
-- `WirePlan` — `schema`, `parameters`, `nodes`, `edges`, `options`. There is
-  no `root`; flow selection is external. `to_document()` strips
-  `editable`/`note` and returns the pure engine document for export/execute.
+- Plan document — `schema`, `parameters`, `nodes`, `edges`, `options`. There is
+  no `root`; flow selection is external.
+- `Param` — `name`, `type`, `required`, `default`, `value`, plus the GUI-only
+  annotations `editable` and `note`. Node — `id`, `name`, `kind`, `path`,
+  `instance`, `policy`, `params`; edge — `from`/`to`; policy — `retries`,
+  `retry_delay_seconds`, `timeout`.
+- Options — the six document options with concrete values taken from the plan
+  document, never re-declared locally: `max_workers`, `summary`, `fixed_clock`,
+  `retries`, `retry_delay_seconds`, `timeout`.
+- `to_document()` strips `editable`/`note` and returns the pure engine document
+  for export/execute. Annotations are never schema-validated.
 - `JobRequest` — `flow_file`, optional `flow_name`, optional `plan` (a raw
   imported or edited `flow-plan/2` document). `WorkerRequest` adds `mode` and
   `log_dir`; `WorkerResult` carries `flow_name`, `available_flows`, `plan`,

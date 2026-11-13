@@ -12,8 +12,9 @@ license = "MIT"
 authors = [{ name = "Erik Rosenlund" }]
 dependencies = [
   "fastapi>=0.115",
+  "jsonschema>=4.20",
   "uvicorn[standard]>=0.30",
-  "sequence-extensions-flow @ git+https://github.com/pyssporg/sequence_extensions.git@ac7e0e590ed3348b5cff5a8544ba1e064610db03",
+  "sequence-extensions-flow @ git+https://github.com/pyssporg/sequence_extensions.git@v3.1.0",
 ]
 
 [project.optional-dependencies]

@@ -6,7 +6,7 @@ import copy
 import json
 from pathlib import Path
 
-from seq_ext_gui.contracts import WorkerRequest
+from seq_ext_gui.contracts import WorkerRequest, to_document
 from seq_ext_gui.engine import _override_from_seed, discover, execute, plan
 
 DEFAULT_OPTIONS = {
@@ -38,7 +38,7 @@ def test_plan_emits_the_v2_document_shape(sample_project) -> None:
 
     assert result.ok, result.error
     assert result.plan is not None
-    document = result.plan.to_document()
+    document = to_document(result.plan)
     assert document["schema"] == "flow-plan/2"
     assert "root" not in document
     assert document["options"] == DEFAULT_OPTIONS
@@ -53,14 +53,14 @@ def test_plan_applies_the_editability_heuristic(sample_project) -> None:
 
     assert result.ok, result.error
     assert result.plan is not None
-    scale = next(node for node in result.plan.nodes if node.name == "scale")
-    factor = next(param for param in scale.params if param.name == "factor")
-    assert factor.editable is True
+    scale = next(node for node in result.plan["nodes"] if node["name"] == "scale")
+    factor = next(param for param in scale["params"] if param["name"] == "factor")
+    assert factor["editable"] is True
 
-    double = next(node for node in result.plan.nodes if node.name == "double")
-    bound = next(param for param in double.params if param.name == "x")
-    assert bound.editable is False
-    assert bound.note == "set by flow code"
+    double = next(node for node in result.plan["nodes"] if node["name"] == "double")
+    bound = next(param for param in double["params"] if param["name"] == "x")
+    assert bound["editable"] is False
+    assert bound["note"] == "set by flow code"
 
     # Instances are edited independently, so no name-fan-out warning remains.
     assert not any("every instance" in warning for warning in result.warnings)
@@ -89,39 +89,39 @@ def test_plan_imports_a_hand_written_document(sample_project) -> None:
 
     assert result.ok, result.error
     assert result.plan is not None
-    document = result.plan.to_document()
+    document = to_document(result.plan)
     parameters = {param["name"]: param["value"] for param in document["parameters"]}
     assert parameters["n"] == 3
     assert document["options"]["max_workers"] == 4
     assert document["options"]["summary"] is True
     assert document["options"]["fixed_clock"] is False
 
-    scale_instances = [node for node in result.plan.nodes if node.name == "scale"]
+    scale_instances = [node for node in result.plan["nodes"] if node["name"] == "scale"]
     assert len(scale_instances) == 3
-    edited = next(node for node in scale_instances if node.instance == 1)
-    assert edited.policy.retries == 2
-    assert edited.policy.timeout == 5.0
-    assert edited.policy.retry_delay_seconds == 0.0
-    factor = next(param for param in edited.params if param.name == "factor")
-    assert factor.value == 10
+    edited = next(node for node in scale_instances if node["instance"] == 1)
+    assert edited["policy"]["retries"] == 2
+    assert edited["policy"]["timeout"] == 5.0
+    assert edited["policy"]["retry_delay_seconds"] == 0.0
+    factor = next(param for param in edited["params"] if param["name"] == "factor")
+    assert factor["value"] == 10
     # Editability comes from fresh code values, not the imported edit.
-    assert factor.editable is True
+    assert factor["editable"] is True
 
     # The edit targets one occurrence; its siblings keep the fresh defaults.
     for node in scale_instances:
-        if node.instance == 1:
+        if node["instance"] == 1:
             continue
-        assert node.policy.retries == 0
-        assert node.policy.timeout is None
-        other = next(param for param in node.params if param.name == "factor")
-        assert other.value == 1
+        assert node["policy"]["retries"] == 0
+        assert node["policy"]["timeout"] is None
+        other = next(param for param in node["params"] if param["name"] == "factor")
+        assert other["value"] == 1
 
 
 def test_override_targets_the_selected_identity_only(sample_project) -> None:
     fresh = plan(_request(sample_project))
     assert fresh.ok, fresh.error
     assert fresh.plan is not None
-    document = fresh.plan.to_document()
+    document = to_document(fresh.plan)
     seed = copy.deepcopy(document)
     selected = next(
         node
@@ -149,7 +149,7 @@ def test_override_skips_unchanged_values(sample_project) -> None:
     fresh = plan(_request(sample_project))
     assert fresh.ok, fresh.error
     assert fresh.plan is not None
-    document = fresh.plan.to_document()
+    document = to_document(fresh.plan)
 
     override, warnings = _override_from_seed(document, document, {})
 
@@ -179,12 +179,12 @@ def test_stale_identity_is_warned_and_not_applied_name_wide(sample_project) -> N
         for warning in result.warnings
     )
     assert result.plan is not None
-    for node in result.plan.nodes:
-        if node.name != "scale":
+    for node in result.plan["nodes"]:
+        if node["name"] != "scale":
             continue
-        assert node.policy.retries == 0
-        factor = next(param for param in node.params if param.name == "factor")
-        assert factor.value == 1
+        assert node["policy"]["retries"] == 0
+        factor = next(param for param in node["params"] if param["name"] == "factor")
+        assert factor["value"] == 1
 
 
 def test_legacy_node_seed_is_skipped_with_a_warning(sample_project) -> None:
@@ -208,14 +208,14 @@ def test_legacy_node_seed_is_skipped_with_a_warning(sample_project) -> None:
     assert any("node scale has no identity" in warning for warning in result.warnings)
     assert result.plan is not None
     # Root parameters still apply.
-    parameters = {param.name: param.value for param in result.plan.parameters}
+    parameters = {param["name"]: param["value"] for param in result.plan["parameters"]}
     assert parameters["n"] == 3
-    for node in result.plan.nodes:
-        if node.name != "scale":
+    for node in result.plan["nodes"]:
+        if node["name"] != "scale":
             continue
-        assert node.policy.retries == 0
-        factor = next(param for param in node.params if param.name == "factor")
-        assert factor.value == 1
+        assert node["policy"]["retries"] == 0
+        factor = next(param for param in node["params"] if param["name"] == "factor")
+        assert factor["value"] == 1
 
 
 def test_plan_rejects_a_non_v2_seed(sample_project) -> None:
@@ -274,11 +274,13 @@ def test_plan_round_trips_a_path_parameter(sample_project) -> None:
 
     assert planned.ok, planned.error
     assert planned.plan is not None
-    parameter = next(param for param in planned.plan.parameters if param.name == "cases_dir")
-    assert parameter.value["path"] == "cases"
-    assert parameter.value["sha256"] is None
+    parameter = next(
+        param for param in planned.plan["parameters"] if param["name"] == "cases_dir"
+    )
+    assert parameter["value"]["path"] == "cases"
+    assert parameter["value"]["sha256"] is None
 
-    document = json.loads(json.dumps(planned.plan.to_document()))
+    document = json.loads(json.dumps(to_document(planned.plan)))
     result = execute(
         WorkerRequest(
             mode="execute",
@@ -384,8 +386,8 @@ def test_execute_round_trips_the_plan_document(sample_project, sample_plan) -> N
     assert Path(result.run.log).parent == log_dir
     assert list(log_dir.glob("*.jsonl"))
     assert result.plan is not None
-    scale = next(node for node in result.plan.nodes if node.name == "scale")
-    assert scale.policy.retries == 2
+    scale = next(node for node in result.plan["nodes"] if node["name"] == "scale")
+    assert scale["policy"]["retries"] == 2
 
 
 def test_execute_maps_flow_failure_to_result(sample_project, tmp_path: Path) -> None:
@@ -404,7 +406,7 @@ def test_execute_maps_flow_failure_to_result(sample_project, tmp_path: Path) -> 
             mode="execute",
             flow_file=str(sample_project.failing),
             flow_name="failing",
-            plan=planned.plan.to_document(),
+            plan=to_document(planned.plan),
             log_dir=str(tmp_path / "logs"),
         )
     )

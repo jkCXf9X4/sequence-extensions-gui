@@ -153,7 +153,7 @@ def sample_project(tmp_path: Path) -> SampleProject:
 @pytest.fixture
 def sample_plan(sample_project: SampleProject) -> dict[str, Any]:
     """A full ``flow-plan/2`` document generated from the hand-written seed."""
-    from seq_ext_gui.contracts import WorkerRequest
+    from seq_ext_gui.contracts import WorkerRequest, to_document
     from seq_ext_gui.engine import plan
 
     result = plan(
@@ -166,4 +166,4 @@ def sample_plan(sample_project: SampleProject) -> dict[str, Any]:
     )
     assert result.ok, result.error
     assert result.plan is not None
-    return result.plan.to_document()
+    return to_document(result.plan)

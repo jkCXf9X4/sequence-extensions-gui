@@ -8,7 +8,10 @@ re-implement the engine.
 ## Layout
 
 - `src/seq_ext_gui/` — Python package (src layout, Python >= 3.11).
-  - `contracts.py` — wire models shared by API and worker. Single source of truth.
+  - `contracts.py` — wire models shared by API and worker, plus GUI-native
+    envelopes. The plan document itself is schema-validated, not modelled.
+  - `schema.py` — loads the engine's published `flow-plan/2` JSON Schema and
+    validates plan documents against it.
   - `engine.py` — import a flow module by path, plan, apply plan edits, execute.
   - `worker.py` — one-shot subprocess entry point: request JSON in, result JSON out.
   - `app.py` — FastAPI application and endpoints.
@@ -41,7 +44,9 @@ seq-ext-gui --project-root ../sequence_extensions/examples/flow_runner
 
 1. **Engine API only.** Call `plan_document`, `apply_override`,
    `execute_plan`, `RunOptions`, `NodePolicy`, `jsonable`, `find_nodes`.
-   Never copy engine logic into the GUI.
+   Never copy engine logic into the GUI. The `flow-plan/2` shape belongs to the
+   engine: validate against its published JSON Schema (`schema.py`), never
+   re-declare the document model locally.
 2. **Isolation.** Every evaluate/execute runs in a fresh subprocess. The web
    process never imports user flow modules.
 3. **Code wins.** Values a flow binds explicitly cannot be overridden. Mark
