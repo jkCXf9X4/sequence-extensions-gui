@@ -396,6 +396,17 @@ def test_run_options_mutate_the_plan() -> None:
     ):
         assert key in source, f"run option {key} is missing"
 
+    layout = read("index.html")
+    editor = layout[layout.index('class="panel editor-panel"') :]
+    assert editor.index('id="run-options"') < editor.index("</aside>"), (
+        "run options belong in the right-hand editor column"
+    )
+    left = layout[layout.index('id="left-panel"') : layout.index('class="right"')]
+    assert 'id="run-options"' not in left, "run options must not stay in the left panel"
+    editor_body = function_body(source, "renderNodeEditor")
+    assert "ui.runOptions.classList.toggle(\"hidden\", nodeSelected)" in editor_body
+    assert "state.selectedId !== ROOT_NODE_ID" in editor_body
+
 
 def test_parameter_edits_use_the_plan_not_overrides() -> None:
     source = read("app.js")

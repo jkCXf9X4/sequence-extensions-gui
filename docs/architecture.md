@@ -160,12 +160,13 @@ Two vertical panels, per the product request:
 
 - Left: project-root field with **Open**, a nested project file tree (`.py`/`.json`)
   where directories expand in place (children fetched lazily per directory and
-  cached) and the selected flow file stays marked, plan option fields, and
-  **Evaluate**. **Import plan**, **Export plan** and the plan status sit in the
+  cached) and the selected flow file stays marked, and **Evaluate**. **Import plan**, **Export plan** and the plan status sit in the
   graph toolbar, with the import file input.
 - Right: SVG DAG (oriented top-to-bottom, layered by longest path), node click
   selects it and opens the parameter and policy editor in a side column,
-  **Execute** button, live run log, result banner.
+  **Execute** button, live run log, result banner. The side column also holds
+  the run-option fields; they show while the flow root (or nothing) is selected
+  and are hidden when a concrete node takes over the column.
 
 Clicking a `.json` file in the tree imports it; clicking a `.py` file selects
 the workflow. Expanding a directory fetches only that level. The single

@@ -13,7 +13,7 @@
   </header>
 
   <main class="workspace">
-    <section id="left-panel" class="panel left-panel" aria-label="Project, plan and run inputs">
+    <section id="left-panel" class="panel left-panel" aria-label="Project and plan inputs">
       <div class="section">
         <h2>Project root</h2>
         <div class="root-row">
@@ -31,30 +31,6 @@
       <div class="section">
         <h2>Nodes</h2>
         <div id="node-inventory" class="node-inventory" role="listbox" aria-label="Node inventory"></div>
-      </div>
-
-      <div class="section">
-        <h2>Run options</h2>
-        <div class="opts-grid">
-          <label for="opt-max-workers">max workers</label>
-          <input id="opt-max-workers" type="number" min="1" step="1" value="16" disabled>
-          <label for="opt-retries">retries</label>
-          <input id="opt-retries" type="number" min="0" step="1" value="0" disabled>
-          <label for="opt-retry-delay">retry delay (s)</label>
-          <input id="opt-retry-delay" type="number" min="0" step="0.1" value="0" disabled>
-          <label for="opt-timeout">timeout (s)</label>
-          <input id="opt-timeout" type="number" min="0" step="0.1" disabled>
-          <label for="opt-summary">summary</label>
-          <select id="opt-summary" disabled>
-            <option value="true">true</option>
-            <option value="false" selected>false</option>
-          </select>
-          <label for="opt-fixed-clock">fixed clock</label>
-          <select id="opt-fixed-clock" disabled>
-            <option value="true">true</option>
-            <option value="false" selected>false</option>
-          </select>
-        </div>
       </div>
 
       <div class="section eval-section">
@@ -93,6 +69,30 @@
           </div>
           <div id="node-editor" class="param-list">
             <p class="muted">Select a node in the graph.</p>
+          </div>
+        </div>
+
+        <div id="run-options" class="section">
+          <h2>Run options</h2>
+          <div class="opts-grid">
+            <label for="opt-max-workers">max workers</label>
+            <input id="opt-max-workers" type="number" min="1" step="1" value="16" disabled>
+            <label for="opt-retries">retries</label>
+            <input id="opt-retries" type="number" min="0" step="1" value="0" disabled>
+            <label for="opt-retry-delay">retry delay (s)</label>
+            <input id="opt-retry-delay" type="number" min="0" step="0.1" value="0" disabled>
+            <label for="opt-timeout">timeout (s)</label>
+            <input id="opt-timeout" type="number" min="0" step="0.1" disabled>
+            <label for="opt-summary">summary</label>
+            <select id="opt-summary" disabled>
+              <option value="true">true</option>
+              <option value="false" selected>false</option>
+            </select>
+            <label for="opt-fixed-clock">fixed clock</label>
+            <select id="opt-fixed-clock" disabled>
+              <option value="true">true</option>
+              <option value="false" selected>false</option>
+            </select>
           </div>
         </div>
       </aside>

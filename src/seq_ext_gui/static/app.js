@@ -34,6 +34,7 @@ const ui = {
   dirtyHint: $("dirty-hint"),
   selectedNode: $("selected-node"),
   nodeEditor: $("node-editor"),
+  runOptions: $("run-options"),
   jobStatus: $("job-status"),
   resultBanner: $("result-banner"),
   log: $("log-console"),
@@ -991,6 +992,10 @@ function setNodePolicyValue(node, key, value) {
 }
 
 function renderNodeEditor() {
+  // Run options share the right column with node parameters: a concrete node
+  // replaces them, the flow root (or an empty view) shows them.
+  const nodeSelected = Boolean(state.plan) && state.selectedId !== ROOT_NODE_ID;
+  ui.runOptions.classList.toggle("hidden", nodeSelected);
   ui.nodeEditor.replaceChildren();
   if (!state.plan) {
     ui.selectedNode.textContent = "none";
