@@ -1,5 +1,13 @@
 # sequence-extensions-gui
 
+> **Archived.** This GUI moved into
+> [`pyssporg/sequence_extensions`](https://github.com/pyssporg/sequence_extensions),
+> where it ships as the optional `gui` extra of the same distribution. Install it
+> with `pip install "sequence-extensions-flow[gui]"` and run
+> `seq-ext-gui --project-root <dir>`; the manual is
+> [`docs/gui.md`](https://github.com/pyssporg/sequence_extensions/blob/main/docs/gui.md).
+> This repository is kept for history and receives no further changes.
+
 Local web GUI for the [`sequence_extensions`](https://github.com/pyssporg/sequence_extensions)
 flow engine. Point it at a workflow module, import a `flow-plan/2` JSON plan
 (or build one from the module), press **Evaluate** to see the dependency
